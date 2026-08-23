@@ -1,0 +1,18 @@
+# 记忆引擎依赖
+# 核心
+lancedb>=0.17.0
+pyarrow>=16.0.0
+
+# 嵌入模型（自动下载 ONNX 版 bge-small-zh-v1.5，首次后完全离线）
+fastembed>=0.4.0
+
+# 中文分词 + BM25
+jieba>=0.42.1
+rank-bm25>=0.2.2
+
+# 工具
+pydantic>=2.0.0
+numpy>=1.24.0
+
+# CLI（Python 标准库为主，click 做命令行）
+click>=8.1.0
