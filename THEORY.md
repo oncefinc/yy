@@ -1,6 +1,6 @@
 # 主动意识引擎：理论基础、工程模型与验证计划
 
-> 文档状态：工程理论说明（v0.1）  
+> 文档状态：工程理论说明（v0.1）
 > 适用范围：`extensions/cow/initiative_engine` 及其依赖的 Memory、Temporal Cognition、Reality Grounding 模块
 
 ## 1. 先说明它不是什么
