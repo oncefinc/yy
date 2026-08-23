@@ -1,0 +1,41 @@
+name: public-contract-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: cowagent/requirements.txt
+      - name: Install minimal test dependency
+        run: python -m pip install --disable-pip-version-check pytest
+      - name: Compile changed public modules
+        run: >-
+          python -m compileall -q
+          extensions/cow/initiative_engine
+          cowagent/bridge/optional_hook_health.py
+          demo/initiative_decision_demo.py
+      - name: Run deterministic public contracts
+        env:
+          PYTHONPATH: ${{ github.workspace }}/extensions:${{ github.workspace }}/cowagent:${{ github.workspace }}/demo
+        run: >-
+          python -m pytest -q
+          extensions/cow/initiative_engine/tests/test_gate.py
+          cowagent/tests/test_optional_hook_health.py
+          demo/test_initiative_decision_demo.py
+      - name: Run synthetic decision demo
+        env:
+          PYTHONPATH: ${{ github.workspace }}/extensions:${{ github.workspace }}/cowagent:${{ github.workspace }}/demo
+        run: python demo/initiative_decision_demo.py --json

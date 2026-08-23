@@ -1571,6 +1571,15 @@ class AgentStreamExecutor:
 
         except Exception as e:
             logger.error(f"Tool execution error: {e}")
+            try:
+                from bridge.optional_hook_health import record_optional_failure
+                record_optional_failure(f"tool_execution.{tool_name}", e)
+            except Exception as health_error:
+                # Observability must never replace the original tool result.
+                logger.warning(
+                    "Tool health accounting failed: error_type=%s",
+                    type(health_error).__name__,
+                )
             error_result = {
                 "status": "error",
                 "result": str(e),

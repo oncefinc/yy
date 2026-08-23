@@ -90,7 +90,10 @@ def evaluate(candidates: list[MotiveCandidate], ctx: ContextSnapshot,
             hours = (datetime.now(timezone.utc) - last).total_seconds() / 3600
             if hours < MIN_HOURS_BETWEEN_PROACTIVE:
                 return "silent", ["COOLDOWN_ACTIVE"], None
-        except: pass
+        except (TypeError, ValueError):
+            # A corrupt cooldown timestamp must not silently disable the
+            # anti-interruption policy.
+            return "silent", ["INVALID_COOLDOWN_STATE"], None
 
     # 5. No candidates
     if not candidates:

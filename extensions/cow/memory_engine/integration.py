@@ -171,24 +171,6 @@ def recall_context(
     return ""
 
 
-# ── 自动提取 ────────────────────────────────────
-
-def auto_extract_from_message(message: str) -> Optional[str]:
-    """
-    从用户消息中自动提取可能有价值的记忆点。
-    返回提取结果描述，或 None（无有价值信息或触发冷却）。
-
-    银月在每次收到用户消息后调用此函数。
-    """
-    engine = get_engine()
-
-    # 简单的启发式提取：检测是否有信息量高的模式
-    # 这里由银月（LLM）判断是否值得提取，本函数只做入口
-    # 具体的"什么值得记"交给银月自己判断
-
-    return None  # 占位——实际提取由银月调用 engine.observe() 完成
-
-
 # ── 会话管理 ────────────────────────────────────
 
 def on_session_start() -> None:
