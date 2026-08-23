@@ -70,3 +70,12 @@ class TestValidCandidate:
         d, r, sel = evaluate([_candidate()], _ctx(), set(), {})
         assert d in ("send_candidate", "revisit_later")
         assert sel is not None
+
+
+class TestCorruptState:
+    def test_malformed_cooldown_fails_closed(self):
+        ctx = _ctx(last_proactive_candidate_at="not-an-iso-timestamp")
+        decision, reasons, selected = evaluate([_candidate()], ctx, set(), {})
+        assert decision == "silent"
+        assert reasons == ["INVALID_COOLDOWN_STATE"]
+        assert selected is None

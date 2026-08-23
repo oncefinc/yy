@@ -16,6 +16,7 @@ from agent.protocol import (
 )
 from bridge.agent_event_handler import AgentEventHandler
 from bridge.agent_initializer import AgentInitializer
+from bridge.optional_hook_health import record_optional_failure
 from bridge.bridge import Bridge
 from bridge.context import Context
 from bridge.reply import Reply, ReplyType
@@ -355,7 +356,10 @@ class AgentBridge:
                     f = m.__file__
                     h = hashlib.sha256(open(f,'rb').read()).hexdigest()[:12]
                     logger.info(f"[AgentBridge] {label}: loaded (sha256={h})")
-                except: pass
+                except Exception as audit_error:
+                    record_optional_failure(
+                        f"deployment_audit.{label}", audit_error
+                    )
             logger.info("[AgentBridge] Cow extension deployment verified")
         except Exception as e:
             logger.warning(f"[AgentBridge] Initiative runtime init failed: {e}")
@@ -610,8 +614,8 @@ class AgentBridge:
             try:
                 from agent.evolution.trigger import mark_run_active
                 mark_run_active(agent, True)
-            except Exception:
-                pass
+            except Exception as hook_error:
+                record_optional_failure("evolution.mark_run_active.start", hook_error)
 
             try:
                 logger.info("[AgentBridge] >>> run try block entered <<<")
@@ -669,8 +673,10 @@ class AgentBridge:
                                         content=query,
                                         event_id=str(getattr(cmsg, 'msg_id', '') or ''),
                                     )
-                            except Exception:
-                                pass  # Never block chat
+                            except Exception as hook_error:
+                                record_optional_failure(
+                                    "initiative.on_user_message", hook_error
+                                )
 
                             from cow.temporal_cognition.models import IngressEvent
                             from cow.temporal_cognition.pipeline import process_message
@@ -787,8 +793,8 @@ class AgentBridge:
                 try:
                     from agent.evolution.trigger import mark_run_active
                     mark_run_active(agent, False)
-                except Exception:
-                    pass
+                except Exception as hook_error:
+                    record_optional_failure("evolution.mark_run_active.end", hook_error)
 
                 # Restore original tools
                 if context and context.get("is_scheduled_task"):
@@ -801,8 +807,10 @@ class AgentBridge:
                 if token_key:
                     try:
                         registry.unregister(token_key)
-                    except Exception:
-                        pass
+                    except Exception as cleanup_error:
+                        record_optional_failure(
+                            "cancel_registry.unregister", cleanup_error
+                        )
                 if session_id and steer_inbox is not None:
                     get_steer_registry().unregister(session_id, steer_inbox)
 
@@ -841,8 +849,8 @@ class AgentBridge:
                     # Only enable proactive push for single chats (group push is
                     # noisy); group sessions still evolve, just without notify.
                     note_user_turn(agent, channel_type=ch, receiver=(rcv if not is_group else ""))
-                except Exception:
-                    pass
+                except Exception as hook_error:
+                    record_optional_failure("evolution.note_user_turn", hook_error)
 
             # Post-message hot-reload: detect edits to ~/cow/mcp.json and
             # sync any new/removed MCP tools into the live agent in the
@@ -871,8 +879,10 @@ class AgentBridge:
                     if not is_group:
                         from cow.initiative_engine.wakeup import on_assistant_message
                         on_assistant_message(str(session_id))
-            except Exception:
-                pass  # Never block chat
+            except Exception as hook_error:
+                record_optional_failure(
+                    "initiative.on_assistant_message", hook_error
+                )
 
             return Reply(ReplyType.TEXT, response)
 
@@ -894,13 +904,17 @@ class AgentBridge:
             if cancel_event is not None and (request_id or session_id):
                 try:
                     get_cancel_registry().unregister(request_id or session_id)
-                except Exception:
-                    pass
+                except Exception as cleanup_error:
+                    record_optional_failure(
+                        "cancel_registry.unregister_error_path", cleanup_error
+                    )
             if session_id and steer_inbox is not None:
                 try:
                     get_steer_registry().unregister(session_id, steer_inbox)
-                except Exception:
-                    pass
+                except Exception as cleanup_error:
+                    record_optional_failure(
+                        "steer_registry.unregister_error_path", cleanup_error
+                    )
             return Reply(ReplyType.ERROR, f"Agent error: {str(e)}")
     
     def _schedule_mcp_hot_reload(self, agent):

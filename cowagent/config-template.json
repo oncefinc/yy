@@ -41,6 +41,7 @@
   "enable_thinking": false,
   "reasoning_effort": "high",
   "knowledge": true,
+  "memory_v2_daily_sync_enabled": false,
   "self_evolution_enabled": true,
   "mcp_tool_retrieval_enabled": false
 }

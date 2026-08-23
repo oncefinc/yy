@@ -1,5 +1,7 @@
 # 银月 / YY
 
+[![public-contract-ci](https://github.com/oncefinc/yy/actions/workflows/ci.yml/badge.svg)](https://github.com/oncefinc/yy/actions/workflows/ci.yml)
+
 银月是一个基于 CowAgent 的个人 AI 伙伴实验项目。仓库保存可复用的源代码和测试，重点包括：
 
 - 微信文字与多模态消息通道
@@ -10,7 +12,25 @@
 - 视觉桥接、接口异常恢复和长会话可靠性修复
 
 “主动意识引擎”是项目的产品名，不代表本项目声称机器拥有主观意识。其技术定位、理论来源、形式化决策模型、可证伪假设与评测计划，见
-[THEORY.md](THEORY.md)。
+[THEORY.md](THEORY.md)。可复现的合成决策 Demo、证据等级和当前尚未完成的真实评测，见 [EVALUATION.md](EVALUATION.md)。
+
+## 当前成熟度
+
+这是一个单用户长期使用中的实验性工程，不是已经验证其普适性的产品：
+
+- 随机区间只负责提供 wake 机会，不能直接决定发送；
+- wake 后还要经过 Context、Thought、Gate、Validator 和 Delivery；
+- 没有有效候选时，`silent` 是正常结果；
+- 自动长期记忆采用“有用户原文依据的每日摘要 → V2/Base”批处理路径；
+- 不支持从每一条原始消息中自动抽取并直接写入长期记忆；
+- 模块测试和合成场景不等于真实用户效果证明。
+
+无需模型或私人数据即可运行公开决策契约：
+
+```powershell
+$env:PYTHONPATH="<repo>\extensions;<repo>\cowagent;<repo>\demo"
+py -3.11 demo\initiative_decision_demo.py
+```
 
 ## 仓库结构
 
@@ -40,6 +60,8 @@ extensions/cow/           银月扩展包
    `INITIATIVE_DELIVERY_ENABLED=true`。
 7. 在 `cowagent/` 下运行 `python app.py`。
 
+`memory_v2_daily_sync_enabled` 默认是 `false`。只有在 V2 与 Base 索引均已初始化、并验证每日摘要证据格式后才应打开；它不会启用逐消息事实抽取。
+
 建议先使用 Shadow 模式和测试账号验证，再打开真实主动发送。
 
 ## 隐私说明
@@ -58,8 +80,15 @@ py -3.11 -m pytest extensions\cow -q
 涉及真实本地数据库的生产边界测试在普通克隆中会自动跳过。只有在隔离审计环境中，
 才应显式设置 `COW_TEST_PRODUCTION_INTEGRITY=1`；不要在共享开发机上误读或改写私人记忆库。
 
+GitHub Actions 默认运行无需模型、网络、私人数据库的最小公开契约。全量测试仍需安装记忆引擎依赖，并在隔离的本地环境运行。
+
 ## 上游与许可证
 
 本仓库包含基于 [zhayujie/CowAgent](https://github.com/zhayujie/CowAgent)
 v2.1.4 修改的框架代码，并非 CowAgent 官方发行版。上游版权与 MIT 许可证均已保留；
 详细归属见 [NOTICE.md](NOTICE.md)。本仓库代码按根目录 [LICENSE](LICENSE) 发布。
+
+## 贡献
+
+公共代码改动采用单一职责 PR、合成测试数据和明确的失败判据。详见
+[CONTRIBUTING.md](CONTRIBUTING.md)。

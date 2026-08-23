@@ -14,7 +14,7 @@
     # 明确记忆
     engine.remember("用户喜欢吃甜食", category="preference", tags=["饮食"])
 
-    # 自动观察（对话中提取）
+    # V1 兼容入口：调用方已经提取好的候选进入待确认池
     engine.observe("今天用户说他喜欢吃小蛋糕", category="preference", tags=["饮食"])
 
     # 统计 & 维护
@@ -169,9 +169,11 @@ class MemoryEngine:
         tags: Optional[list[str]] = None,
     ) -> IngestResult:
         """
-        自动观察 — 对话中提取信息
+        V1 兼容观察入口 — 接收调用方已经提取好的候选信息
 
-        有冷却期和每会话上限，confidence=0.3 入待确认池
+        本方法不会从原始消息中自动抽取事实。它有冷却期和每会话上限，
+        confidence=0.3 后进入 V1 待确认池。生产的权威 V2 自动写入走
+        daily summary → ``sync_daily_summary``，避免两套写入语义并存。
         """
         self._ensure_ready()
         return self.ingest.auto_observe(
