@@ -23,6 +23,98 @@ ITEM_FILE = 4
 ITEM_VIDEO = 5
 
 
+_REF_KEYS = ("ref_msg", "refMsg", "ref_message", "quoted_message", "reply_message")
+_MESSAGE_ITEM_KEYS = ("message_item", "messageItem", "item")
+_TEXT_ITEM_KEYS = ("text_item", "textItem")
+_ID_KEYS = ("msg_id", "message_id", "client_id", "seq")
+
+
+def _dict_value(mapping: dict, keys: tuple):
+    """Return the first present value for protocol-compatible aliases."""
+    if not isinstance(mapping, dict):
+        return None
+    for key in keys:
+        value = mapping.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _text_from_item(item: dict) -> str:
+    """Extract text from a Weixin message item without assuming one key style."""
+    if not isinstance(item, dict):
+        return ""
+    text_item = _dict_value(item, _TEXT_ITEM_KEYS)
+    if isinstance(text_item, dict):
+        text = text_item.get("text")
+        if isinstance(text, str):
+            return text
+    for key in ("text", "content", "summary"):
+        value = item.get(key)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def _find_reference(msg: dict, item_list: list):
+    """Find quote metadata across known Weixin payload layouts."""
+    containers = []
+    if isinstance(msg, dict):
+        containers.append(msg)
+    for item in item_list:
+        if not isinstance(item, dict):
+            continue
+        containers.append(item)
+        text_item = _dict_value(item, _TEXT_ITEM_KEYS)
+        if isinstance(text_item, dict):
+            containers.append(text_item)
+    for container in containers:
+        ref = _dict_value(container, _REF_KEYS)
+        if isinstance(ref, dict):
+            return ref
+    return None
+
+
+def _reference_parts(ref: dict):
+    """Return displayable quote parts and an optional referenced media item."""
+    if not isinstance(ref, dict):
+        return [], None
+    parts = []
+    for key in ("title", "summary", "display_text", "displayText"):
+        value = ref.get(key)
+        if isinstance(value, str) and value.strip():
+            parts.append(value.strip())
+            break
+    ref_item = _dict_value(ref, _MESSAGE_ITEM_KEYS)
+    if isinstance(ref_item, dict):
+        body = _text_from_item(ref_item).strip()
+        if body and body not in parts:
+            parts.append(body)
+    else:
+        ref_item = None
+    if not parts:
+        direct = _text_from_item(ref).strip()
+        if direct:
+            parts.append(direct)
+    return parts, ref_item
+
+
+def _message_ids(*containers) -> list:
+    """Collect stable protocol identifiers from message/item dictionaries."""
+    result = []
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        for key in _ID_KEYS:
+            value = container.get(key)
+            if value is None or value == "":
+                continue
+            value = str(value)
+            if value not in result:
+                result.append(value)
+    return result
+
+
 def _get_tmp_dir() -> str:
     ws_root = expand_path(conf().get("agent_workspace", "~/cow"))
     tmp_dir = os.path.join(ws_root, "tmp")
@@ -62,27 +154,34 @@ class WeixinMessage(ChatMessage):
         media_type = None
         ref_text = ""
 
+        ref = _find_reference(msg, item_list)
+        ref_parts, ref_media_item = _reference_parts(ref)
+        self.has_reference = ref is not None
+        self.reference_ids = _message_ids(ref, ref_media_item)
+        self.message_aliases = _message_ids(msg, *item_list)
+        ref_media_type = (
+            ref_media_item.get("type", 0)
+            if isinstance(ref_media_item, dict) else 0
+        )
+        self.reference_resolved = bool(
+            ref_parts or ref_media_type in (ITEM_IMAGE, ITEM_VIDEO, ITEM_FILE)
+        )
+        if ref is not None:
+            if ref_parts:
+                ref_text = "[引用消息开始]\n" + "\n".join(ref_parts) + "\n[引用消息结束]\n"
+            else:
+                ref_text = "[用户引用了一条消息，但微信未提供引用正文]\n"
+            if isinstance(ref_media_item, dict):
+                if ref_media_type in (ITEM_IMAGE, ITEM_VIDEO, ITEM_FILE):
+                    media_item = ref_media_item
+                    media_type = ref_media_type
+
         for item in item_list:
             itype = item.get("type", 0)
 
             if itype == ITEM_TEXT:
                 text_item = item.get("text_item", {})
                 text_body = text_item.get("text", "")
-
-                ref = item.get("ref_msg")
-                if ref:
-                    ref_title = ref.get("title", "")
-                    ref_mi = ref.get("message_item", {})
-                    ref_body = ""
-                    if ref_mi.get("type") == ITEM_TEXT:
-                        ref_body = ref_mi.get("text_item", {}).get("text", "")
-                    if ref_title or ref_body:
-                        parts = [p for p in [ref_title, ref_body] if p]
-                        ref_text = f"[引用: {' | '.join(parts)}]\n"
-                    # If ref is a media item, treat it as the media to download
-                    if ref_mi.get("type") in (ITEM_IMAGE, ITEM_VIDEO, ITEM_FILE):
-                        media_item = ref_mi
-                        media_type = ref_mi.get("type")
 
             elif itype == ITEM_VOICE:
                 voice_item = item.get("voice_item", {})
@@ -98,6 +197,8 @@ class WeixinMessage(ChatMessage):
                 if not media_item:
                     media_item = item
                     media_type = itype
+
+        self.current_text = text_body
 
         # Determine ctype and content
         if media_item and not text_body:

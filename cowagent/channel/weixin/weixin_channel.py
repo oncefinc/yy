@@ -21,9 +21,11 @@ from channel.weixin.weixin_api import (
     DEFAULT_BASE_URL, CDN_BASE_URL,
 )
 from channel.weixin.weixin_message import WeixinMessage
+from channel.weixin.weixin_reference_store import WeixinReferenceStore
 from common.expired_dict import ExpiredDict
 from common.log import logger
 from common.singleton import singleton
+from common.utils import expand_path
 from config import conf, get_weixin_credentials_path
 
 MAX_CONSECUTIVE_FAILURES = 3
@@ -33,6 +35,37 @@ SESSION_EXPIRED_ERRCODE = -14
 TEXT_CHUNK_LIMIT = 4000
 QR_LOGIN_TIMEOUT_S = 480
 QR_MAX_REFRESHES = 10
+
+
+def _restore_quoted_text_from_store(wx_msg, session_id: str, store) -> bool:
+    if not getattr(wx_msg, "has_reference", False):
+        return False
+    if getattr(wx_msg, "reference_resolved", False):
+        return True
+    aliases = getattr(wx_msg, "reference_ids", [])
+    if not aliases:
+        return False
+    quoted = store.resolve(session_id, aliases)
+    if not quoted:
+        return False
+    marker = "[用户引用了一条消息，但微信未提供引用正文]\n"
+    current = str(wx_msg.content or "")
+    if current.startswith(marker):
+        current = current[len(marker):]
+    wx_msg.content = (
+        "[引用消息开始]\n" + quoted + "\n[引用消息结束]\n" + current
+    )
+    wx_msg.reference_resolved = True
+    return True
+
+
+def _index_inbound_text_in_store(wx_msg, session_id: str, store) -> int:
+    return store.remember(
+        session_id,
+        getattr(wx_msg, "message_aliases", []),
+        getattr(wx_msg, "current_text", ""),
+        getattr(wx_msg, "create_time", 0),
+    )
 
 
 def _load_credentials(cred_path: str) -> dict:
@@ -84,8 +117,26 @@ class WeixinChannel(ChatChannel):
         self._credentials_path = ""
         self.login_status = self.LOGIN_STATUS_IDLE
         self._current_qr_url = ""
+        self._reference_store = None
 
         conf()["single_chat_prefix"] = [""]
+
+    def _get_reference_store(self):
+        if self._reference_store is None:
+            workspace = expand_path(conf().get("agent_workspace", "~/cow"))
+            db_path = os.path.join(workspace, "sessions", "weixin_refs.db")
+            self._reference_store = WeixinReferenceStore(db_path)
+        return self._reference_store
+
+    def _restore_quoted_text(self, wx_msg, session_id: str) -> bool:
+        return _restore_quoted_text_from_store(
+            wx_msg, session_id, self._get_reference_store()
+        )
+
+    def _index_inbound_text(self, wx_msg, session_id: str) -> int:
+        return _index_inbound_text_in_store(
+            wx_msg, session_id, self._get_reference_store()
+        )
 
     # ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -468,8 +519,19 @@ class WeixinChannel(ChatChannel):
             logger.error(f"[Weixin] Failed to parse WeixinMessage: {e}", exc_info=True)
             return
 
+        try:
+            self._restore_quoted_text(wx_msg, from_user)
+            self._index_inbound_text(wx_msg, from_user)
+        except Exception as e:
+            logger.warning(f"[Weixin] Quote index unavailable: {type(e).__name__}")
+
+        quote_state = (
+            "resolved" if getattr(wx_msg, "reference_resolved", False)
+            else "unresolved" if getattr(wx_msg, "has_reference", False)
+            else "none"
+        )
         logger.info(f"[Weixin] Received: from={from_user} ctype={wx_msg.ctype} "
-                     f"content={str(wx_msg.content)[:50]}")
+                     f"quote={quote_state} content={str(wx_msg.content)[:50]}")
 
         # File cache logic
         from channel.file_cache import get_file_cache
