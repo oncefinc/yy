@@ -71,16 +71,28 @@ def evaluate(candidates: list[MotiveCandidate], ctx: ContextSnapshot,
     """
     reasons = []
 
+    if ctx.pending_followup:
+        return "silent", ["UNRESOLVED_FOLLOWUP"], None
+
     # 1. Quiet hours
     if ctx.quiet_hours or is_quiet_hours(ctx.local_hour):
         return "silent", ["QUIET_HOURS"], None
+
+    if not ctx.proactive_policy_allowed:
+        return "silent", [
+            ctx.proactive_policy_reason or "PROACTIVE_POLICY_PAUSED"
+        ], None
 
     # 2. User recently active
     if ctx.minutes_since_user_message < MIN_MINUTES_AFTER_USER_MESSAGE:
         return "silent", ["RECENT_USER_ACTIVITY"], None
 
     # 3. Daily budget
-    if ctx.proactive_candidates_today >= MAX_PROACTIVE_CANDIDATES_PER_DAY:
+    daily_limit = max(0, min(
+        MAX_PROACTIVE_CANDIDATES_PER_DAY,
+        int(ctx.proactive_daily_limit),
+    ))
+    if ctx.proactive_candidates_today >= daily_limit:
         return "silent", ["DAILY_BUDGET_EXHAUSTED"], None
 
     # 4. Cooldown
@@ -115,7 +127,8 @@ def evaluate(candidates: list[MotiveCandidate], ctx: ContextSnapshot,
         if c.dedupe_key and c.dedupe_key in recent_dedupe_keys:
             continue
         # Revisit limit
-        if revisit_count.get(c.motive_type, 0) >= MAX_REVISITS_PER_MOTIVE:
+        if (not c.revisit_id
+                and revisit_count.get(c.motive_type, 0) >= MAX_REVISITS_PER_MOTIVE):
             continue
         valid.append(c)
 

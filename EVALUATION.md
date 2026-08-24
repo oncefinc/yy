@@ -119,3 +119,20 @@ the full engine over the same observation period. At minimum it should report:
 Until those results exist, the project should describe the engine as an
 experimental proactive interaction architecture, not as a demonstrated general
 theory of machine initiative or consciousness.
+
+### Proactive feedback-loop evidence
+
+The current implementation distinguishes three boundaries that should be
+evaluated separately:
+
+1. `send_candidate`: the controller selected an utterance;
+2. `delivery_allowed=true`: the channel confirmed delivery;
+3. `ProactiveReceipt.response_category`: the first observable user response.
+
+This prevents Shadow candidates from being reported as real outreach. It also
+enables reproducible cadence tests without retaining raw reply text. The
+CuriosityPool remains non-authorizing (`runtime_enabled=false`): entry in the
+pool alone cannot trigger search or delivery.
+
+The next empirical comparison should report confirmed deliveries, response
+categories, revisit outcomes, and curiosity provenance—not only wake counts.

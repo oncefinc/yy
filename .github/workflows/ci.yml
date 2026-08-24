@@ -35,6 +35,11 @@ jobs:
         run: >-
           python -m pytest -q
           extensions/cow/initiative_engine/tests/test_gate.py
+          extensions/cow/initiative_engine/tests/test_proactive_receipts.py
+          extensions/cow/initiative_engine/tests/test_proactive_policy.py
+          extensions/cow/initiative_engine/tests/test_revisit.py
+          extensions/cow/initiative_engine/tests/test_curiosity_pool.py
+          extensions/cow/tests/test_initiative_conversation_continuity.py
           extensions/cow/tests/test_portable_paths.py
           cowagent/tests/test_optional_hook_health.py
           demo/test_initiative_decision_demo.py

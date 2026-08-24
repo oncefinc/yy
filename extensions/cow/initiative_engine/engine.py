@@ -1,16 +1,17 @@
 """Initiative Engine — Phase 2 M1: Shadow-only, never delivers."""
 from __future__ import annotations
 import time, logging
+from datetime import datetime
 from pathlib import Path
 from .config import ENGINE_ENABLED, DELIVERY_ENABLED, LOW_CONFIDENCE_THRESHOLD
 from .models import WakeEvent, InitiativeDecision, MotiveCandidate
 from .gate import evaluate as gate_evaluate, is_quiet_hours
-from .wakeup import load_state, compute_next_wake, _classify_topic_origin
+from .wakeup import load_state, compute_next_wake, _effective_topic_origin, _now
 from .shadow import log_decision
 from .delivery import deliver
 from .context_builder import build_context
 from .motives import generate as generate_candidates
-from .thoughts import generate as generate_thoughts
+from .thoughts import generate as generate_thoughts, curiosity_suppression_reason
 from .llm_worker import submit as llm_submit, stats as llm_stats
 from .validator import validate as validate_draft
 
@@ -90,6 +91,18 @@ def process_wake(event: WakeEvent, state_path: Path | None = None) -> Initiative
         "curiosity_gate_selected": False,
         "curiosity_suppressed_reason": "",
         "curiosity_task_topic_suppressed_count": 0,
+        "curiosity_pool_total": len(ctx.curiosity_pool_shadow),
+        "curiosity_pool_active": sum(
+            1 for item in ctx.curiosity_pool_shadow
+            if item.get("status") == "active"
+        ),
+        "curiosity_pool_runtime_enabled": False,
+        "proactive_policy_mode": ctx.proactive_policy_mode,
+        "proactive_policy_reason": ctx.proactive_policy_reason,
+        "proactive_daily_limit": ctx.proactive_daily_limit,
+        "proactive_not_before": ctx.proactive_not_before or "",
+        "revisit_due_count": 0,
+        "selected_revisit_id": "",
     }
 
     # 3. Generate thought seeds (v1.1: multi-source, not just tasks)
@@ -104,14 +117,9 @@ def process_wake(event: WakeEvent, state_path: Path | None = None) -> Initiative
     task_topics = [
         item for item in (ctx.recent_topics or [])
         if isinstance(item, dict)
-        and (
-            item.get("topic_origin") == "user_search_request"
-            or (
-                not item.get("topic_origin")
-                and _classify_topic_origin(str(item.get("topic", "")))
-                == "user_search_request"
-            )
-        )
+        and _effective_topic_origin(
+            str(item.get("topic", "")), str(item.get("topic_origin", ""))
+        ) == "user_task"
     ]
     obs["curiosity_task_topic_suppressed_count"] = len(task_topics)
     if curiosity_thought:
@@ -122,8 +130,10 @@ def process_wake(event: WakeEvent, state_path: Path | None = None) -> Initiative
         )[:80]
         obs["curiosity_observed_at"] = curiosity_thought.curiosity_observed_at
         obs["curiosity_occurrence_count"] = curiosity_thought.curiosity_occurrence_count
-    elif task_topics:
-        obs["curiosity_suppressed_reason"] = "USER_SEARCH_REQUEST"
+    else:
+        obs["curiosity_suppressed_reason"] = curiosity_suppression_reason(
+            ctx.recent_topics or [], _now()
+        )
 
     # 3b. Cheap pre-check: filter before calling gate
     from .config import MAX_PROACTIVE_CANDIDATES_PER_DAY
@@ -153,6 +163,10 @@ def process_wake(event: WakeEvent, state_path: Path | None = None) -> Initiative
     # Also generate legacy candidates for gate compatibility
     candidates = generate_candidates(ctx)
     obs["legacy_candidates"] = len(candidates)
+    from .revisit import due_candidates
+    due_revisits = due_candidates(state, _now())
+    candidates.extend(due_revisits)
+    obs["revisit_due_count"] = len(due_revisits)
 
     # 4. Hard gate — merge the three strongest thoughts into candidates.
     # Generation order is an implementation detail; it must not permanently
@@ -176,6 +190,7 @@ def process_wake(event: WakeEvent, state_path: Path | None = None) -> Initiative
         obs["selected_domain"] = selected.life_domain
         if selected.evidence_scene_ids:
             obs["selected_scene_id"] = selected.evidence_scene_ids[0]
+        obs["selected_revisit_id"] = selected.revisit_id
 
     # 4b. If gate says send_candidate and we have a matching ThoughtSeed, try LLM draft
     draft_msg = ""
@@ -220,7 +235,10 @@ def process_wake(event: WakeEvent, state_path: Path | None = None) -> Initiative
             else:
                 draft = None
             if draft and matching_thought is not None:
-                validated = validate_draft(draft, matching_thought, 0, MAX_PROACTIVE_CANDIDATES_PER_DAY)
+                validated = validate_draft(
+                    draft, matching_thought, 0,
+                    MAX_PROACTIVE_CANDIDATES_PER_DAY, ctx=ctx,
+                )
                 if validated.validation_result == "passed":
                     draft_msg = validated.message
                 else:
@@ -237,6 +255,16 @@ def process_wake(event: WakeEvent, state_path: Path | None = None) -> Initiative
                     obs["curiosity_suppressed_reason"] = "LLM_FAILED_OR_BUDGET"
 
     # 5. Build decision
+    revisit_after = ""
+    next_wake = compute_next_wake(
+        decision, ctx.proactive_candidates_today,
+        ctx.minutes_since_user_message, event.trigger_type,
+    )
+    if decision == "revisit_later" and selected:
+        from .revisit import compute_revisit_due
+        revisit_due = compute_revisit_due(selected, _now())
+        revisit_after = revisit_due.isoformat()
+        next_wake = min(next_wake, revisit_due)
     d = InitiativeDecision(
         wake_id=event.wake_id,
         receiver_id=event.receiver_id,
@@ -245,32 +273,43 @@ def process_wake(event: WakeEvent, state_path: Path | None = None) -> Initiative
         reason_summary="; ".join(reasons),
         candidate_message=draft_msg if draft_msg else (selected.summary if selected else ""),
         delivery_allowed=False,
-        next_wake_at=compute_next_wake(
-            decision, ctx.proactive_candidates_today,
-            ctx.minutes_since_user_message, event.trigger_type
-        ).isoformat(),
+        revisit_after=revisit_after,
+        next_wake_at=next_wake.isoformat(),
         latency_ms=(time.perf_counter() - t0) * 1000,
         model="deterministic_gate",
+        trigger_type=event.trigger_type,
     )
     if selected:
         d.motive_id = selected.motive_id
+        d.motive_type = selected.motive_type
+        d.life_domain = selected.life_domain
         d.reason_summary += f" | motive={selected.motive_type} conf={selected.confidence:.2f}"
 
     # Production delivery happens only after Gate + LLM + validator.
     if DELIVERY_ENABLED and d.decision == "send_candidate":
         d.delivery_allowed = deliver(d)
+        if d.delivery_allowed:
+            try:
+                from .proactive_receipts import record_delivery
+                record_delivery(d, selected)
+            except Exception as receipt_error:
+                d.reason_codes.append("RECEIPT_WRITE_FAILED")
+                d.reason_summary += (
+                    f"; RECEIPT_WRITE_FAILED:{type(receipt_error).__name__}"
+                )
         if not d.delivery_allowed:
             d.reason_codes.append("DELIVERY_FAILED")
             d.reason_summary += "; DELIVERY_FAILED"
 
     # Audit every decision, including actual delivery outcome.
     log_decision(d, obs_counters=obs)
-    _update_state(d, state_path, selected_by_gate)
+    _update_state(d, state_path, selected_by_gate, selected)
     return d
 
 
 def _update_state(d: InitiativeDecision, sp: Path | None = None,
-                  selected: MotiveCandidate | None = None):
+                  selected: MotiveCandidate | None = None,
+                  evaluated_candidate: MotiveCandidate | None = None):
     """Thread-safe state update via atomic_update."""
     from .wakeup import atomic_update
 
@@ -283,6 +322,12 @@ def _update_state(d: InitiativeDecision, sp: Path | None = None,
         state.setdefault("last_generic_check_in_at", None)
         state.setdefault("recent_life_domains", {})
         state.setdefault("life_domain_cursor", 0)
+        state.setdefault("curiosity_pool", [])
+        try:
+            from .curiosity_pool import maintain_pool
+            maintain_pool(state, datetime.fromisoformat(d.created_at))
+        except Exception:
+            pass
 
         # Record post-Gate selection even when the downstream Shadow draft fails.
         # This is the point that would have been send-eligible with delivery on.
@@ -308,5 +353,12 @@ def _update_state(d: InitiativeDecision, sp: Path | None = None,
         if d.decision == "send_candidate":
             state["last_proactive_candidate_at"] = d.created_at
             state["daily_candidate_count"] = state.get("daily_candidate_count", 0) + 1
+
+        from .revisit import apply_revisit_outcome
+        apply_revisit_outcome(
+            state, d, evaluated_candidate,
+            now=datetime.fromisoformat(d.created_at),
+            delivery_enabled=DELIVERY_ENABLED,
+        )
 
     atomic_update(_apply, sp)

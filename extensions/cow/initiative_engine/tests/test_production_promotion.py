@@ -17,6 +17,7 @@ def test_host_binds_weixin_channel_with_reply_prefix(monkeypatch):
     monkeypatch.setattr(initiative_config, "DELIVERY_ENABLED", True)
 
     sent = []
+    remembered = []
 
     class FakeChannel:
         def send_proactive_text(self, receiver, text):
@@ -27,15 +28,26 @@ def test_host_binds_weixin_channel_with_reply_prefix(monkeypatch):
         def get_channel(self, name):
             return FakeChannel() if name == "weixin" else None
 
+    class FakeAgentBridge:
+        def remember_proactive_output(self, receiver, text, channel_type=""):
+            remembered.append((receiver, text, channel_type))
+
+    class FakeBridge:
+        def get_agent_bridge(self):
+            return FakeAgentBridge()
+
     monkeypatch.setattr(app, "conf", lambda: {
         "single_chat_reply_prefix": "[银月] "
     })
+    import bridge.bridge as bridge_module
+    monkeypatch.setattr(bridge_module, "Bridge", FakeBridge)
     app._configure_initiative_delivery(FakeManager())
     try:
         d = InitiativeDecision(receiver_id="teacher", decision="send_candidate",
                                candidate_message="在干嘛呀～")
         assert deliver(d) is True
         assert sent == [("teacher", "[银月] 在干嘛呀～")]
+        assert remembered == [("teacher", "在干嘛呀～", "weixin")]
     finally:
         configure_delivery(None)
 
@@ -49,6 +61,28 @@ def test_channel_rejection_is_not_counted_as_delivery():
         assert d.delivery_allowed is False
     finally:
         configure_delivery(None)
+
+
+def test_confirmed_proactive_output_is_persisted_as_assistant_turn(monkeypatch):
+    from bridge.agent_bridge import AgentBridge
+
+    stored = []
+    bridge = object.__new__(AgentBridge)
+    monkeypatch.setattr(
+        bridge, "_persist_messages",
+        lambda session_id, messages, channel_type="": stored.append(
+            (session_id, messages, channel_type)
+        ),
+    )
+    monkeypatch.setattr(
+        bridge, "sync_session_messages_from_store", lambda session_id: None,
+    )
+    bridge.remember_proactive_output("teacher", "今天怎么样？", "weixin")
+    assert stored[0][0] == "teacher"
+    assert stored[0][1] == [{
+        "role": "assistant",
+        "content": [{"type": "text", "text": "今天怎么样？"}],
+    }]
 
 
 def test_temporal_loader_exposes_only_fresh_semantic_state(monkeypatch):

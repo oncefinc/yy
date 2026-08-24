@@ -881,7 +881,9 @@ class AgentBridge:
                     is_group = bool(context.get("isgroup")) if context else False
                     if not is_group:
                         from cow.initiative_engine.wakeup import on_assistant_message
-                        on_assistant_message(str(session_id))
+                        on_assistant_message(
+                            str(session_id), content=str(response or "")
+                        )
             except Exception as hook_error:
                 record_optional_failure(
                     "initiative.on_assistant_message", hook_error
@@ -1147,6 +1149,29 @@ class AgentBridge:
         except Exception as e:
             logger.warning(
                 f"[AgentBridge] Failed to persist messages for session={session_id}: {e}"
+            )
+
+    def remember_proactive_output(
+        self,
+        session_id: str,
+        content: str,
+        channel_type: str = "",
+    ) -> None:
+        """Persist one confirmed proactive message as the assistant's turn."""
+        content = str(content or "").strip()
+        if not session_id or not content:
+            return
+        message = {
+            "role": "assistant",
+            "content": [{"type": "text", "text": content[:2000]}],
+        }
+        self._persist_messages(session_id, [message], channel_type)
+        try:
+            self.sync_session_messages_from_store(session_id)
+        except Exception as error:
+            logger.warning(
+                "[AgentBridge] Proactive history sync failed: %s",
+                type(error).__name__,
             )
 
     # Marker used to identify scheduler-injected user messages so we can apply

@@ -18,10 +18,10 @@ class TestTopicOrigin:
     def test_explicit_search_instruction_is_task_origin(self, text):
         from cow.initiative_engine.wakeup import _classify_topic_origin
 
-        assert _classify_topic_origin(text) == "user_search_request"
+        assert _classify_topic_origin(text) == "user_task"
 
     @pytest.mark.parametrize(("text", "expected"), [
-        ("AI怎么产生真正的好奇心？", "user_question"),
+        ("AI怎么产生真正的好奇心？", "knowledge_question"),
         ("我有点好奇，AI会不会真的改变", "user_topic"),
         ("最近在想银月会不会改变", "user_topic"),
     ])
@@ -37,7 +37,7 @@ class TestTopicOrigin:
         signal = _extract_topic_signal("帮我查一下医美行业", "evt-1", now)
 
         assert signal is not None
-        assert signal["topic_origin"] == "user_search_request"
+        assert signal["topic_origin"] == "user_task"
         assert signal["first_observed_at"] == now.isoformat()
         assert signal["occurrence_count"] == 1
 
@@ -54,7 +54,7 @@ class TestCuriositySelection:
         now = datetime.now(timezone.utc)
         topic = {
             "topic": "你可以查一下这块的代码 是GPT写的 但是别改",
-            "topic_origin": "user_search_request",
+            "topic_origin": "user_task",
             "topic_hash": "task-hash",
             "event_id": "evt-task",
             "observed_at": (now - timedelta(hours=3)).isoformat(),
@@ -80,7 +80,7 @@ class TestCuriositySelection:
         observed = (now - timedelta(hours=3)).isoformat()
         topic = {
             "topic": "AI怎么产生真正的好奇心？",
-            "topic_origin": "user_question",
+            "topic_origin": "knowledge_question",
             "topic_hash": "question-hash",
             "event_id": "evt-question",
             "observed_at": observed,
@@ -90,7 +90,7 @@ class TestCuriositySelection:
 
         assert len(rows) == 1
         thought = rows[0]
-        assert thought.curiosity_origin == "user_question"
+        assert thought.curiosity_origin == "knowledge_question"
         assert thought.curiosity_topic_hash == "question-hash"
         assert thought.curiosity_observed_at == observed
         assert thought.curiosity_occurrence_count == 3
@@ -146,7 +146,7 @@ class TestCuriosityObservability:
             minutes_since_user_message=180,
             recent_topics=[{
                 "topic": "你可以查一下这块的代码 是GPT写的 但是别改",
-                "topic_origin": "user_search_request",
+                "topic_origin": "user_task",
                 "event_id": "evt-task",
                 "observed_at": observed.isoformat(),
             }],
@@ -169,6 +169,6 @@ class TestCuriosityObservability:
         engine.process_wake(WakeEvent(receiver_id="wx"), tmp_path / "state.json")
 
         assert captured["curiosity_task_topic_suppressed_count"] == 1
-        assert captured["curiosity_suppressed_reason"] == "USER_SEARCH_REQUEST"
+        assert captured["curiosity_suppressed_reason"] == "USER_TASK"
         assert captured["curiosity_search_performed"] is False
         assert captured["curiosity_gate_selected"] is False

@@ -338,7 +338,16 @@ def _configure_initiative_delivery(channel_mgr):
                 payload = prefix + payload
             return bool(channel.send_proactive_text(receiver, payload))
 
-        configure_delivery(_deliver)
+        def _remember(decision) -> None:
+            """Persist confirmed proactive output into normal chat history."""
+            from bridge.bridge import Bridge
+            Bridge().get_agent_bridge().remember_proactive_output(
+                decision.receiver_id,
+                decision.candidate_message,
+                channel_type=const.WEIXIN,
+            )
+
+        configure_delivery(_deliver, observer=_remember)
         logger.info("[App] Initiative production delivery connected to Weixin")
     except Exception as e:
         logger.warning("[App] Initiative delivery setup failed: %s", type(e).__name__)

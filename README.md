@@ -112,3 +112,8 @@ v2.1.4 修改的框架代码，并非 CowAgent 官方发行版。上游版权与
 
 公共代码改动采用单一职责 PR、合成测试数据和明确的失败判据。详见
 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+当前开发状态、已踩过的坑与下一阶段证据门槛见
+[DEVELOPMENT.md](DEVELOPMENT.md)。主动意识的理论边界见
+[THEORY.md](THEORY.md)，可复现实验与对照说明见
+[EVALUATION.md](EVALUATION.md)。

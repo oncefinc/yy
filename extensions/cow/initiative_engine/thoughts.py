@@ -63,6 +63,7 @@ def generate(ctx: ContextSnapshot, recent_topics: set[str] | None = None,
 
     # 1. Social presence — only after meaningful silence (>4h)
     if (ctx.minutes_since_user_message > 240
+            and not ctx.pending_followup
             and _generic_check_in_available(ctx.last_generic_check_in_at, now)):
         thoughts.append(_social_presence(ctx))
 
@@ -133,10 +134,31 @@ def _social_presence(ctx: ContextSnapshot) -> ThoughtSeed:
     if mins < 240:
         return ThoughtSeed(thought_type="social_presence", confidence=0.0)
     relevance = 0.7 if mins > 480 else 0.5
+    if ctx.same_day_contact:
+        if ctx.current_period == "afternoon":
+            subject = "今天下午过得怎么样，忙不忙"
+        elif ctx.current_period == "evening":
+            subject = "今天过得怎么样，这会儿忙不忙"
+        elif ctx.current_period == "noon":
+            subject = "今天上午过得怎么样，中午歇会儿没有"
+        else:
+            subject = "今天过得怎么样，忙不忙"
+        continuity = "今天已经聊过，沿用当天语境，不使用久别重逢式问候"
+    elif mins < 24 * 60:
+        subject = "今天过得怎么样，忙不忙"
+        continuity = "跨日但间隔不足一天，不使用‘最近怎么样’"
+    else:
+        subject = "有段时间没聊，想问问最近怎么样"
+        continuity = "距离上次聊天已超过一天"
+    day_hint = {
+        "workday": "今天是工作日（仅作弱语境，不代表正在上班）",
+        "weekend": "今天是周末（仅作弱语境，不代表正在休息）",
+        "holiday": "今天是节假日（仅作弱语境，不代表正在休息）",
+    }.get(ctx.day_type, "日期类型未知")
     return ThoughtSeed(
         thought_type="social_presence",
-        subject="单纯想起用户，想问问近况",
-        why_now=f"距离上次聊天约{mins//60}小时",
+        subject=subject,
+        why_now=f"距离上次聊天约{mins//60}小时；{continuity}；{day_hint}",
         life_domain="general",
         relevance=relevance, novelty=0.6, confidence=0.7,
         sensitivity="normal", intrusiveness=0.2,
@@ -204,24 +226,12 @@ def _curiosity(ctx: ContextSnapshot, now: datetime) -> list[ThoughtSeed]:
         event_id = str(item.get("event_id", "")).strip()
         if not topic or not event_id:
             continue
-        origin = str(item.get("topic_origin", "")).strip()
-        if not origin:
-            # Backward-compatible classification for topic signals persisted
-            # before provenance metadata existed.
-            from .wakeup import _classify_topic_origin
-            origin = _classify_topic_origin(topic)
-        if origin == "user_search_request":
-            continue
-        try:
-            observed = datetime.fromisoformat(str(item.get("observed_at", "")))
-            if observed.tzinfo is None:
-                observed = observed.replace(tzinfo=UTC)
-            age_minutes = (now - observed.astimezone(UTC)).total_seconds() / 60
-        except (TypeError, ValueError):
-            continue
-        if age_minutes < CURIOSITY_MIN_TOPIC_AGE_MINUTES:
-            continue
-        if age_minutes > CURIOSITY_TOPIC_MAX_AGE_DAYS * 24 * 60:
+        from .wakeup import _effective_topic_origin
+        origin = _effective_topic_origin(topic, item.get("topic_origin", ""))
+        if _curiosity_topic_rejection_reason(
+                item, now, origin=origin,
+                min_age_minutes=CURIOSITY_MIN_TOPIC_AGE_MINUTES,
+                max_age_days=CURIOSITY_TOPIC_MAX_AGE_DAYS):
             continue
         return [ThoughtSeed(
             thought_type="curiosity",
@@ -245,6 +255,82 @@ def _curiosity(ctx: ContextSnapshot, now: datetime) -> list[ThoughtSeed]:
     return []
 
 
+def _parse_topic_datetime(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value or ""))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+    except (TypeError, ValueError):
+        return None
+
+
+def _curiosity_topic_rejection_reason(
+    item: dict,
+    now: datetime,
+    *,
+    origin: str = "",
+    min_age_minutes: int | None = None,
+    max_age_days: int | None = None,
+) -> str:
+    """Explain why a recent topic is not eligible for autonomous search."""
+    from .config import (
+        CURIOSITY_MIN_TOPIC_AGE_MINUTES,
+        CURIOSITY_TOPIC_MAX_AGE_DAYS,
+    )
+    from .wakeup import _effective_topic_origin, _topic_valid_until
+
+    topic = str(item.get("topic", "")).strip()
+    event_id = str(item.get("event_id", "")).strip()
+    if not topic or not event_id:
+        return "INVALID_TOPIC_SIGNAL"
+    effective = origin or _effective_topic_origin(
+        topic, str(item.get("topic_origin", ""))
+    )
+    if effective == "user_task":
+        return "USER_TASK"
+    if effective == "assistant_runtime":
+        return "ASSISTANT_RUNTIME_TOPIC"
+    if effective == "conversation_reaction":
+        return "CONVERSATION_REACTION"
+    observed = _parse_topic_datetime(str(item.get("observed_at", "")))
+    if observed is None:
+        return "INVALID_TOPIC_TIME"
+    if effective == "ephemeral_choice":
+        valid_until = _parse_topic_datetime(str(item.get("valid_until", "")))
+        if valid_until is None:
+            valid_until = _parse_topic_datetime(
+                _topic_valid_until(topic, effective, observed)
+            )
+        if valid_until is not None and now.astimezone(UTC) >= valid_until:
+            return "EPHEMERAL_EXPIRED"
+        return "EPHEMERAL_CHOICE"
+    if effective != "knowledge_question":
+        return "NO_KNOWLEDGE_GAP"
+
+    minimum = (CURIOSITY_MIN_TOPIC_AGE_MINUTES if min_age_minutes is None
+               else min_age_minutes)
+    maximum = (CURIOSITY_TOPIC_MAX_AGE_DAYS if max_age_days is None
+               else max_age_days)
+    age_minutes = (now.astimezone(UTC) - observed).total_seconds() / 60
+    if age_minutes < minimum:
+        return "TOPIC_TOO_RECENT"
+    if age_minutes > maximum * 24 * 60:
+        return "TOPIC_EXPIRED"
+    return ""
+
+
+def curiosity_suppression_reason(items: list[dict], now: datetime) -> str:
+    """Return the newest meaningful C0A rejection reason for Shadow logs."""
+    for item in reversed(items or []):
+        if not isinstance(item, dict):
+            continue
+        reason = _curiosity_topic_rejection_reason(item, now)
+        if reason:
+            return reason
+    return ""
+
+
 def _memory_associations(ctx, weekday, hour):
     thoughts = []
     for mem in ctx.core_memories[:5]:
@@ -259,7 +345,7 @@ def _memory_associations(ctx, weekday, hour):
                 life_domain="general", relevance=0.6, novelty=0.5,
                 confidence=0.7,
             ))
-        if 19 <= hour <= 22 and any(w in content for w in ["游戏","示例游戏","动漫","小说","电影"]):
+        if 19 <= hour <= 22 and any(w in content for w in ["游戏","射击游戏","动漫","小说","电影"]):
             thoughts.append(ThoughtSeed(
                 thought_type="memory_association",
                 subject=f"晚间想起: {summary[:40]}",

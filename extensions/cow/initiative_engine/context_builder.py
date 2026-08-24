@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from .models import ContextSnapshot
 from .wakeup import load_state
+from .calendar_context import resolve_day_type
 from .config import (
     INITIATIVE_LIFE_DOMAINS, LIFE_DOMAIN_CONFIG,
     LIFE_DOMAIN_COOLDOWN_HOURS, LIFE_DOMAIN_QUERIES_PER_WAKE,
@@ -14,6 +15,28 @@ from .config import (
 )
 
 logger = logging.getLogger("initiative.context_builder")
+
+
+def _conversation_period(hour: int) -> str:
+    if 5 <= hour < 11:
+        return "morning"
+    if 11 <= hour < 14:
+        return "noon"
+    if 14 <= hour < 18:
+        return "afternoon"
+    if 18 <= hour < 23:
+        return "evening"
+    return "night"
+
+
+def _active_pending_followup(state: dict, now: datetime) -> dict:
+    pending = state.get("pending_followup")
+    if not isinstance(pending, dict):
+        return {}
+    expires = _parse_timestamp(pending.get("expires_at"))
+    if expires is None or now >= expires:
+        return {}
+    return dict(pending)
 
 
 def _load_temporal_current_state() -> dict:
@@ -320,11 +343,32 @@ def build_context(receiver_id: str,
         last_proactive_candidate_at=state.get("last_proactive_candidate_at"),
         last_generic_check_in_at=state.get("last_generic_check_in_at"),
     )
+    try:
+        from .proactive_policy import evaluate_response_policy
+        receipt_path = (
+            Path(state_path).with_name("proactive_receipts.json")
+            if state_path is not None else None
+        )
+        policy = evaluate_response_policy(receiver_id, path=receipt_path, now=now)
+        ctx.proactive_policy_allowed = policy.allowed
+        ctx.proactive_policy_reason = policy.reason_code
+        ctx.proactive_policy_mode = policy.mode
+        ctx.proactive_daily_limit = policy.daily_limit
+        ctx.proactive_not_before = policy.not_before
+    except Exception as exc:
+        logger.warning("proactive policy unavailable: error=%s", type(exc).__name__)
+    ctx.current_period = _conversation_period(local_hour)
+    ctx.day_type, ctx.day_type_source = resolve_day_type(local_now)
     ctx.current_state = _load_temporal_current_state()
     ctx.recent_topics = [
         dict(item) for item in (state.get("recent_topic_signals", []) or [])
         if isinstance(item, dict) and item.get("topic") and item.get("observed_at")
     ][-10:]
+    try:
+        from .curiosity_pool import pool_snapshot
+        ctx.curiosity_pool_shadow = pool_snapshot(state, now)
+    except Exception as exc:
+        logger.warning("curiosity pool shadow unavailable: error=%s", type(exc).__name__)
 
     # Real semantic queries for different memory types
     ctx.core_memories = _vector_search("个人信息 偏好 身份 习惯 关系", receiver_id, top_k=10)
@@ -355,13 +399,26 @@ def build_context(receiver_id: str,
     if lum:
         try:
             dt = datetime.fromisoformat(lum)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
             ctx.minutes_since_user_message = (now - dt).total_seconds() / 60
             ctx.last_user_message_at = lum
+            local_last = dt.astimezone(CST)
+            ctx.same_day_contact = local_last.date() == local_now.date()
+            ctx.last_user_period = _conversation_period(local_last.hour)
         except:
             ctx.minutes_since_user_message = 999
     else:
         ctx.minutes_since_user_message = 999
 
+    ctx.user_messages_today = (
+        int(state.get("user_messages_today", 0) or 0)
+        if state.get("conversation_local_date") == local_now.date().isoformat()
+        else 0
+    )
+    if ctx.same_day_contact and ctx.user_messages_today < 1:
+        ctx.user_messages_today = 1
+    ctx.pending_followup = _active_pending_followup(state, now)
     ctx.relationship_state = {"receiver_id": receiver_id}
     return ctx
 

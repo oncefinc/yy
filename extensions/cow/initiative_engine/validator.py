@@ -1,6 +1,6 @@
 """Deterministic safety validator — no second LLM call. Fail closed."""
 from __future__ import annotations
-from .models import CandidateDraft, ThoughtSeed
+from .models import CandidateDraft, ThoughtSeed, ContextSnapshot
 
 
 FORBIDDEN_PATTERNS = [
@@ -22,7 +22,8 @@ SENSITIVE_TOPICS = [
 
 def validate(draft: CandidateDraft, thought: ThoughtSeed,
              daily_llm_count: int, max_llm_per_day: int = 2,
-             recent_messages: list[str] | None = None) -> CandidateDraft:
+             recent_messages: list[str] | None = None,
+             ctx: ContextSnapshot | None = None) -> CandidateDraft:
     """Deterministic validation. Returns draft with validation_result set."""
     reasons = []
     recent_messages = recent_messages or []
@@ -74,6 +75,22 @@ def validate(draft: CandidateDraft, thought: ThoughtSeed,
     diagnostic_words = ["你心情不好", "你焦虑", "你抑郁", "你肯定累了", "你最近一直"]
     if any(w in msg for w in diagnostic_words):
         reasons.append("EMOTIONAL_DIAGNOSIS")
+
+    if thought.thought_type == "social_presence" and ctx is not None:
+        if ctx.pending_followup:
+            reasons.append("UNRESOLVED_FOLLOWUP")
+        if (ctx.same_day_contact
+                and any(p in msg for p in ("最近怎么样", "最近还好吗", "好久不见"))):
+            reasons.append("SAME_DAY_LONG_ABSENCE_OPENER")
+        current = ctx.current_state or {}
+        has_work = bool(current.get("work"))
+        has_location = bool(current.get("location"))
+        unsupported_work_claims = (
+            "刚下班到家", "还在公司", "还在上班", "正在上班", "工作辛苦了",
+        )
+        if (not has_work and not has_location
+                and any(p in msg for p in unsupported_work_claims)):
+            reasons.append("UNSUPPORTED_CURRENT_WORK_STATE")
 
     # 6. Sensitive topics without recent evidence
     for topic in SENSITIVE_TOPICS:

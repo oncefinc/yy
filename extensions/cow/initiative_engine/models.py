@@ -28,6 +28,11 @@ class ContextSnapshot:
     last_assistant_message_at: Optional[str] = None
     last_proactive_candidate_at: Optional[str] = None
     proactive_candidates_today: int = 0
+    proactive_policy_allowed: bool = True
+    proactive_policy_reason: str = ""
+    proactive_policy_mode: str = "normal"
+    proactive_daily_limit: int = 2
+    proactive_not_before: Optional[str] = None
     quiet_hours: bool = False
     open_loops: list[dict] = field(default_factory=list)
     prospective_memories: list[dict] = field(default_factory=list)
@@ -47,6 +52,14 @@ class ContextSnapshot:
     # Recent explicit conversation subjects captured by the chat hook.  These
     # are short-lived topic signals, not long-term memories or current facts.
     recent_topics: list[dict] = field(default_factory=list)
+    curiosity_pool_shadow: list[dict] = field(default_factory=list)
+    same_day_contact: bool = False
+    user_messages_today: int = 0
+    last_user_period: str = ""
+    current_period: str = ""
+    pending_followup: dict = field(default_factory=dict)
+    day_type: str = "unknown"
+    day_type_source: str = ""
 
 @dataclass
 class MotiveCandidate:
@@ -64,6 +77,7 @@ class MotiveCandidate:
     dedupe_key: str = ""
     initiative_policy: str = "shadow_only"  # allow|shadow_only|never
     life_domain: str = ""
+    revisit_id: str = ""
 
     def make_dedupe_key(self) -> str:
         return hashlib.sha256(
@@ -166,6 +180,9 @@ class InitiativeDecision:
     receiver_id: str = ""
     decision: str = "silent"  # silent|revisit_later|send_candidate
     motive_id: str = ""
+    motive_type: str = ""
+    life_domain: str = ""
+    trigger_type: str = ""
     reason_codes: list[str] = field(default_factory=list)
     reason_summary: str = ""
     candidate_message: str = ""

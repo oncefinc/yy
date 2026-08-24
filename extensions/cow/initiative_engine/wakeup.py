@@ -51,14 +51,18 @@ def _default_state() -> dict:
         "missed_wake_count": 0, "daemon_instance_id": None,
         "state_version": 2,
         "last_user_message_at": None, "last_assistant_message_at": None,
+        "conversation_local_date": "", "user_messages_today": 0,
+        "pending_followup": None,
         "last_proactive_candidate_at": None, "daily_candidate_count": 0,
         "daily_date": "", "recent_dedupe_keys": [], "revisit_count": {},
+        "revisit_items": [],
         "last_generic_check_in_at": None,
         "recent_life_domains": {}, "life_domain_cursor": 0,
         "recent_domains": [],
         "recent_topic_signals": [],
         "curiosity_daily_date": "", "curiosity_search_count": 0,
         "curiosity_history": [], "curiosity_inflight": None,
+        "curiosity_pool": [],
         "debounce_pending": False, "consecutive_wake_failures": 0,
         "engine_version": "m1_v2",
     }
@@ -201,6 +205,50 @@ _EN_SEARCH_REQUEST = re.compile(
     r"(?:search|look\s+up|find|research)\b",
     re.I,
 )
+_EPHEMERAL_CHOICE = re.compile(
+    r"(?:(?:今天|现在|这会儿|待会|等下|中午|午饭|午餐|早饭|早餐|晚饭|晚餐|夜宵)"
+    r".{0,18}(?:吃什么|吃啥|选哪个|选什么|去哪|去哪里|要不要)|"
+    r"(?:纠结|不知道|没想好|还没决定).{0,18}"
+    r"(?:吃什么|吃啥|吃哪家|选哪个|选什么|去哪|去哪里))",
+    re.I,
+)
+_KNOWLEDGE_QUESTION = re.compile(
+    r"(?:为什么|为何|怎么(?:会|样|做|实现|产生)?|如何|什么是|是什么|"
+    r"有什么区别|原理|原因|机制|能不能|是否|会不会|多少|哪里|哪种)",
+    re.I,
+)
+_USER_REFLECTION = re.compile(
+    r"^(?:我(?:有点|突然)?好奇|我(?:最近)?在想|最近在想|我觉得|我感觉)",
+    re.I,
+)
+_ASSISTANT_RUNTIME_TOPIC = re.compile(
+    r"(?:(?:你|银月).{0,24}(?:重启|启动|拉起|活过来|回来了|在线|掉线|"
+    r"报错|错误|挂了|进程|实例|守护|换.{0,6}脑子|切换.{0,6}模型)|"
+    r"(?:重启|启动|拉起|报错|错误|进程|实例|守护).{0,18}(?:你|银月))",
+    re.I,
+)
+_CONVERSATION_REACTION = re.compile(
+    r"^(?:啊|诶|咦|哦|嗯|哎|哈+)[？?!！~～…\s，,。]*"
+    r".{0,28}(?:怎么回事|咋回事|怎么了|咋了|什么情况|真的假的|又来|活过来)",
+    re.I,
+)
+_FOLLOWUP_EXPECTATION = re.compile(
+    r"(?:记得|好了|弄好|处理好|完成后|结束后|回来后?|恢复后?)"
+    r".{0,16}(?:告诉我|跟我说|说一声|通知我|回我)",
+    re.I,
+)
+_FOLLOWUP_COMPLETION = re.compile(
+    r"(?:(?:已经|已).{0,16}(?:完成|搞定|处理|修好|恢复|回来|成功|验证)|"
+    r"(?:搞定了|处理好了|修好了|恢复了|回来了|完成了|验证通过))",
+    re.I,
+)
+PENDING_FOLLOWUP_TTL_HOURS = 24
+
+USER_TASK_ORIGINS = frozenset(("user_task", "user_search_request"))
+TOPIC_ORIGINS = frozenset((
+    "user_task", "ephemeral_choice", "knowledge_question", "user_topic",
+    "assistant_runtime", "conversation_reaction",
+))
 
 
 def _classify_topic_origin(text: str) -> str:
@@ -211,10 +259,45 @@ def _classify_topic_origin(text: str) -> str:
     """
     value = str(text or "").strip()
     if _EXPLICIT_SEARCH_REQUEST.search(value) or _EN_SEARCH_REQUEST.search(value):
-        return "user_search_request"
-    if "?" in value or "？" in value or re.search(r"为什么|怎么|如何|什么", value):
-        return "user_question"
+        return "user_task"
+    if _EPHEMERAL_CHOICE.search(value):
+        return "ephemeral_choice"
+    if _ASSISTANT_RUNTIME_TOPIC.search(value):
+        return "assistant_runtime"
+    if _CONVERSATION_REACTION.search(value):
+        return "conversation_reaction"
+    if _USER_REFLECTION.search(value) and "?" not in value and "？" not in value:
+        return "user_topic"
+    if "?" in value or "？" in value or _KNOWLEDGE_QUESTION.search(value):
+        return "knowledge_question"
     return "user_topic"
+
+
+def _effective_topic_origin(text: str, stored_origin: str = "") -> str:
+    """Return the current origin while safely migrating legacy labels."""
+    origin = str(stored_origin or "").strip()
+    if origin in USER_TASK_ORIGINS:
+        return "user_task"
+    if origin == "knowledge_question":
+        current = _classify_topic_origin(text)
+        if current in {
+            "user_task", "ephemeral_choice", "assistant_runtime",
+            "conversation_reaction",
+        }:
+            return current
+        return origin
+    if origin in TOPIC_ORIGINS:
+        return origin
+    return _classify_topic_origin(text)
+
+
+def _topic_valid_until(text: str, origin: str, observed_at: datetime) -> str:
+    if _effective_topic_origin(text, origin) != "ephemeral_choice":
+        return ""
+    from .config import CURIOSITY_EPHEMERAL_TTL_MINUTES
+    return (observed_at + timedelta(
+        minutes=CURIOSITY_EPHEMERAL_TTL_MINUTES
+    )).isoformat()
 
 
 def _extract_topic_signal(content: str, event_id: str, now: datetime) -> dict | None:
@@ -233,13 +316,15 @@ def _extract_topic_signal(content: str, event_id: str, now: datetime) -> dict | 
     stable_event = event_id or hashlib.sha256(
         f"{topic}|{now.isoformat()}".encode("utf-8")
     ).hexdigest()[:16]
+    origin = _classify_topic_origin(topic)
     return {
         "topic": topic,
         "topic_hash": hashlib.sha256(topic.casefold().encode("utf-8")).hexdigest()[:16],
         "event_id": str(stable_event)[:80],
         "observed_at": now.isoformat(),
         "first_observed_at": now.isoformat(),
-        "topic_origin": _classify_topic_origin(topic),
+        "topic_origin": origin,
+        "valid_until": _topic_valid_until(topic, origin, now),
         "occurrence_count": 1,
     }
 
@@ -249,9 +334,26 @@ def on_user_message(receiver_id: str, content: str = "", event_id: str = "",
     """Called when user sends a message. Updates state (thread-safe)."""
     now = _now()
     topic_signal = _extract_topic_signal(content, event_id, now)
+    expects_followup = bool(_FOLLOWUP_EXPECTATION.search(str(content or "")))
+    local_date = _to_cst(now).date().isoformat()
 
     def _update(state: dict):
         state["last_user_message_at"] = now.isoformat()
+        if state.get("conversation_local_date") != local_date:
+            state["conversation_local_date"] = local_date
+            state["user_messages_today"] = 0
+        state["user_messages_today"] = int(
+            state.get("user_messages_today", 0) or 0
+        ) + 1
+        if expects_followup:
+            state["pending_followup"] = {
+                "kind": "report_back",
+                "created_at": now.isoformat(),
+                "expires_at": (now + timedelta(
+                    hours=PENDING_FOLLOWUP_TTL_HOURS
+                )).isoformat(),
+                "event_id": str(event_id or "")[:80],
+            }
         state["debounce_pending"] = True
         idle_check = now + timedelta(minutes=45)
         state["next_idle_check_at"] = idle_check.isoformat()
@@ -276,22 +378,38 @@ def on_user_message(receiver_id: str, content: str = "", event_id: str = "",
             ]
             topics.append(topic_signal)
             state["recent_topic_signals"] = topics[-12:]
+            try:
+                from .curiosity_pool import observe_topic_signal
+                observe_topic_signal(state, topic_signal, now)
+            except Exception:
+                pass
 
     try:
         atomic_update(_update, state_path)
     except Exception:
         pass  # Never block chat
 
+    try:
+        from .proactive_receipts import resolve_user_reply
+        resolve_user_reply(receiver_id, content, event_id, now=now)
+    except Exception:
+        pass
 
-def on_assistant_message(receiver_id: str) -> None:
+
+def on_assistant_message(receiver_id: str, content: str = "",
+                         state_path: Path | None = None) -> None:
     """Called after assistant replies (thread-safe)."""
     now = _now()
 
     def _update(state: dict):
         state["last_assistant_message_at"] = now.isoformat()
+        pending = state.get("pending_followup")
+        if (isinstance(pending, dict)
+                and _FOLLOWUP_COMPLETION.search(str(content or ""))):
+            state["pending_followup"] = None
 
     try:
-        atomic_update(_update)
+        atomic_update(_update, state_path)
     except Exception:
         pass  # Never block chat
 
