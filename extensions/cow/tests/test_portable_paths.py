@@ -52,8 +52,9 @@ def test_relative_environment_paths_are_repo_relative(tmp_path):
 
 def test_memory_indexes_can_be_overridden_independently(tmp_path):
     result = _python(
-        "from cow.memory_engine.config import V2_LANCE_DIR,BASE_LANCE_DIR;"
-        "print(V2_LANCE_DIR);print(BASE_LANCE_DIR)",
+        "from pathlib import Path;from cow.runtime_paths import env_path;"
+        "print(env_path('COW_V2_LANCE_DIR',Path('unused-v2')));"
+        "print(env_path('COW_BASE_LANCE_DIR',Path('unused-base')))",
         tmp_path,
         {
             "COW_V2_LANCE_DIR": "portable/v2",
