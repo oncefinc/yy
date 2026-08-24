@@ -15,9 +15,11 @@ from typing import Optional
 
 import numpy as np
 
+from .config import BASE_LANCE_DIR, DATA_DIR, MEMORY_SEARCH_INDEX_TABLE
+
 logger = logging.getLogger("memory.shadow")
 
-SHADOW_LOG_DIR = Path("d:/cow/cow/memory_engine/data/shadow_logs")
+SHADOW_LOG_DIR = DATA_DIR / "shadow_logs"
 SHADOW_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Configuration ───────────────────────────────────
@@ -160,8 +162,8 @@ def run_shadow_query(query: str, receiver_id: str, v1_ctx: str = "") -> None:
 
             import lancedb
             from cow.memory_engine.schemas import MemoryRecordV2, MemoryStatus, MemoryKind
-            db = lancedb.connect("d:/cow/cow/memory_engine/data/lance_db_base")
-            tbl = db.open_table("memories_base")
+            db = lancedb.connect(str(BASE_LANCE_DIR))
+            tbl = db.open_table(MEMORY_SEARCH_INDEX_TABLE)
             raw = tbl.search(qv.tolist()).limit(20).to_list()
 
             PROS_CLOSED = {MemoryStatus.EXPIRED.value, MemoryStatus.CANCELLED.value,

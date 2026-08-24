@@ -12,6 +12,7 @@
 **/*.key
 
 # Personal memory, conversations and runtime state
+/.runtime/
 /**/MEMORY.md
 /**/USER.md
 /**/AGENT.md

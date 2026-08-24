@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from cow.initiative_engine import thoughts
-from cow.initiative_engine.config import DELIVERY_ENABLED
+from cow.initiative_engine.config import DELIVERY_ENABLED, SCENE_STORE_PATH
 from cow.initiative_engine.context_builder import load_scene_candidates
 from cow.initiative_engine.engine import _thought_to_candidate
 from cow.initiative_engine.gate import has_valid_grounding, requires_grounding
@@ -174,7 +174,9 @@ def test_delivery_is_promoted_to_production():
 
 
 def test_real_scene_artifact_loads_without_mutation():
-    path = Path("d:/cow/cow/memory_engine/data/scenes/scenes_v1.json")
+    path = Path(SCENE_STORE_PATH)
+    if not path.exists():
+        pytest.skip("private Scene artifact is not part of the public clone")
     before = path.read_bytes()
     payload = json.loads(before.decode("utf-8"))
     receiver = payload["scenes"][0]["receiver_id"]

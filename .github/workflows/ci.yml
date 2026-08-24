@@ -25,7 +25,9 @@ jobs:
         run: >-
           python -m compileall -q
           extensions/cow/initiative_engine
+          extensions/cow/runtime_paths.py
           cowagent/bridge/optional_hook_health.py
+          scripts
           demo/initiative_decision_demo.py
       - name: Run deterministic public contracts
         env:
@@ -33,6 +35,7 @@ jobs:
         run: >-
           python -m pytest -q
           extensions/cow/initiative_engine/tests/test_gate.py
+          extensions/cow/tests/test_portable_paths.py
           cowagent/tests/test_optional_hook_health.py
           demo/test_initiative_decision_demo.py
       - name: Run synthetic decision demo

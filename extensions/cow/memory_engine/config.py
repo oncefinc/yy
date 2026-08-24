@@ -3,15 +3,17 @@
 """
 from pathlib import Path
 
+from cow.runtime_paths import MEMORY_DATA_DIR, MODEL_ROOT, env_path
+
 # ── 路径 ───────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
-MODELS_DIR = BASE_DIR / "models"
+DATA_DIR = MEMORY_DATA_DIR
+MODELS_DIR = MODEL_ROOT
 DICT_PATH = BASE_DIR / "jieba_dict.txt"
 PENDING_POOL_PATH = DATA_DIR / "pending_pool.json"
 
 # LanceDB 数据目录
-LANCE_DIR = DATA_DIR / "lance_db"
+LANCE_DIR = env_path("COW_V1_LANCE_DIR", DATA_DIR / "lance_db")
 
 # ── 记忆权威与派生索引（Memory 2.1 / M0）──────────────
 # V2 MemoryRecordV2 是唯一权威 L1 Atom Store；Base 是 V2 的可重建
@@ -21,8 +23,8 @@ MEMORY_AUTHORITY_TABLE = "memories_v2"
 MEMORY_SEARCH_INDEX = "memory_base"
 MEMORY_SEARCH_INDEX_TABLE = "memories_base"
 
-V2_LANCE_DIR = DATA_DIR / "lance_db_v2"
-BASE_LANCE_DIR = DATA_DIR / "lance_db_base"
+V2_LANCE_DIR = env_path("COW_V2_LANCE_DIR", DATA_DIR / "lance_db_v2")
+BASE_LANCE_DIR = env_path("COW_BASE_LANCE_DIR", DATA_DIR / "lance_db_base")
 BASE_MANIFEST_PATH = BASE_LANCE_DIR / "index_manifest.json"
 
 # Base 派生索引使用的嵌入模型（区别于 V1/V2 迁移时的 bge-small）

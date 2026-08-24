@@ -6,6 +6,8 @@ import pytest
 import hashlib
 from pathlib import Path
 
+from cow.runtime_paths import INITIATIVE_DATA_DIR
+
 
 def _hash_dir(d: Path) -> dict[str, str]:
     """Return {filename: sha256_hex16} for all files in directory (recursive)."""
@@ -20,7 +22,7 @@ def _hash_dir(d: Path) -> dict[str, str]:
 
 
 # Snapshot production data dir before any tests run
-_PROD_INITIATIVE_DATA = Path("d:/cow/cow/initiative_engine/data")
+_PROD_INITIATIVE_DATA = INITIATIVE_DATA_DIR
 _PRE_TEST_SNAPSHOT: dict[str, str] | None = None
 
 

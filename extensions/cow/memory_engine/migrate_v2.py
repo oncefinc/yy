@@ -31,18 +31,16 @@ from .schemas import (
     _content_hash,
 )
 from .store import MemoryStore as V1Store
+from cow.runtime_paths import MEMORY_DATA_DIR, TEMP_DIR, WORKSPACE_ROOT, env_path
 
 logger = logging.getLogger("memory.migrate_v2")
 
-ROOT_C = Path(os.environ.get("COW_BASELINE_ROOT", str(Path.home() / "cow")))
-ROOT_D = Path(os.environ.get("COW_WORKSPACE_ROOT", "d:/cow"))
-V2_LANCE_DIR = Path(os.environ.get(
-    "COW_V2_LANCE_DIR", str(ROOT_D / "cow/memory_engine/data/lance_db_v2")
-))
-V2_REPORTS_DIR = Path(os.environ.get(
-    "COW_MIGRATION_REPORTS_DIR",
-    str(ROOT_D / "cow/memory_engine/data/migration_reports"),
-))
+ROOT_D = WORKSPACE_ROOT
+ROOT_C = env_path("COW_BASELINE_ROOT", WORKSPACE_ROOT)
+V2_LANCE_DIR = env_path("COW_V2_LANCE_DIR", MEMORY_DATA_DIR / "lance_db_v2")
+V2_REPORTS_DIR = env_path(
+    "COW_MIGRATION_REPORTS_DIR", MEMORY_DATA_DIR / "migration_reports"
+)
 DEFAULT_RECEIVER = os.environ.get("COW_DEFAULT_RECEIVER", "example-user")
 
 EXCLUDE_PATTERNS = [
@@ -82,7 +80,7 @@ def collect_sources(manifest_path: Optional[Path] = None) -> list[dict]:
     Returns list of {path, content, sha256, data_type, drive}.
     """
     if manifest_path is None:
-        manifest_path = Path("d:/cow/tmp/source_manifest.json")
+        manifest_path = TEMP_DIR / "source_manifest.json"
 
     if manifest_path.exists():
         with open(manifest_path, "r", encoding="utf-8") as f:

@@ -31,15 +31,13 @@ def _ensure_cow_extension_path() -> None:
     """Make the optional ``cow`` extension package importable.
 
     Public clones keep it under ``<repo>/extensions``. Existing deployments
-    can point at another location with ``COW_EXTENSION_ROOT``; the two legacy
-    locations remain compatibility fallbacks.
+    can point at another location with ``COW_EXTENSION_ROOT``.
     """
-    candidates = (
-        os.environ.get("COW_EXTENSION_ROOT", ""),
-        str(Path(__file__).resolve().parents[2] / "extensions"),
-        os.path.expanduser("~/cow"),
-        "d:/cow",
-    )
+    repo_root = Path(__file__).resolve().parents[2]
+    configured = os.environ.get("COW_EXTENSION_ROOT", "").strip()
+    if configured and not Path(configured).is_absolute():
+        configured = str(repo_root / configured)
+    candidates = (configured, str(repo_root / "extensions"))
     for candidate in candidates:
         if candidate and os.path.isdir(candidate) and candidate not in sys.path:
             sys.path.insert(0, candidate)

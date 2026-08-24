@@ -44,21 +44,39 @@ extensions/cow/           银月扩展包
   tests/                  跨模块回归测试
 ```
 
-部署时将 `extensions` 加入 `PYTHONPATH`，使 `import cow` 指向
-`extensions/cow`。公开版本使用仓库相对路径，并允许通过 `.env.example` 中的环境变量
-覆盖数据、配置和扩展目录。
+运行时代码会根据仓库自身位置找到 `extensions/cow`，不要求项目位于 D 盘，
+也不依赖启动命令的当前目录。默认可写数据集中到 `<repo>/.runtime/`，该目录不会提交；
+所有路径都可通过 `.env.example` 中的环境变量覆盖。
 
 ## 快速开始
 
 1. 安装 Python 3.11。
 2. 安装 `cowagent/requirements.txt` 与
    `extensions/cow/memory_engine/requirements.txt` 中的依赖。
-3. 将 `cowagent/config-template.json` 复制为 `cowagent/config.json`，只在本机填写密钥。
-4. 下载 bge-base 模型到本机模型目录；模型权重不存放在本仓库。
-5. 设置 `PYTHONPATH=<repo>/extensions;<repo>/cowagent`。
+3. 将 `.env.example` 复制为 `.env`，按需修改路径；不要提交 `.env`。
+4. 将 `cowagent/config-template.json` 复制到 `.env` 中 `COW_DATA_DIR` 指向的目录并命名为
+   `config.json`，只在本机填写密钥。若不设置 `COW_DATA_DIR`，也可继续放在 `cowagent/`。
+5. 下载 bge-base 模型到 `COW_BASE_MODEL_PATH`；未配置本地路径时会使用
+   `COW_BASE_MODEL_ID`（默认 `BAAI/bge-base-zh-v1.5`）按依赖库规则下载。
 6. 主动消息默认关闭。仅在完成 Shadow 验证后设置 `INITIATIVE_RECEIVER_ID`，并显式配置
    `INITIATIVE_DELIVERY_ENABLED=true`。
-7. 在 `cowagent/` 下运行 `python app.py`。
+7. 先运行 `python scripts/doctor.py` 做只读检查，再运行
+   `python scripts/launch.py`。两个命令都可以从任意目录调用。
+
+需要完全手动启动时，仍可设置
+`PYTHONPATH=<repo>/extensions;<repo>/cowagent` 后在 `cowagent/` 下运行 `python app.py`。
+
+### 路径约定
+
+- `COW_RUNTIME_ROOT`：全部本地运行数据的默认根目录；默认 `<repo>/.runtime`。
+- `COW_DATA_DIR`：CowAgent 的 `config.json`、日志和凭据目录。
+- `COW_MEMORY_DATA_DIR`：V1/V2/Base、Scene、Journal 和 Memory Shadow。
+- `INITIATIVE_DATA_DIR`：主动引擎状态；`INITIATIVE_SHADOW_DIR` 可单独覆盖日志目录。
+- `COW_TEMPORAL_DATA_DIR`：短期世界状态数据库。
+- `COW_BASE_MODEL_PATH`：本地 bge-base 模型；模型也可放在任意盘。
+
+`.env` 中的相对路径始终相对于仓库根目录解析，因此换盘、改目录名或从 Linux 启动
+都不需要修改 Python 源码。
 
 `memory_v2_daily_sync_enabled` 默认是 `false`。只有在 V2 与 Base 索引均已初始化、并验证每日摘要证据格式后才应打开；它不会启用逐消息事实抽取。
 

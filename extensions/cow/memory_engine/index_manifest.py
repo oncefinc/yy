@@ -32,6 +32,7 @@ from .config import (
     EMBEDDING_MODEL,
     BASE_EMBEDDING_MODEL, BASE_EMBEDDING_DIM,
 )
+from cow.runtime_paths import base_model_reference
 
 logger = logging.getLogger("memory.index_manifest")
 
@@ -75,7 +76,6 @@ def _read_vector_dim(table) -> Optional[int]:
 
 # ── bge-base 文档编码（Base 重建用）───────────────
 
-_DOC_MODEL_PATH = "D:/cow/models/bge-base-zh-v1.5"
 _doc_model = None
 
 
@@ -88,7 +88,7 @@ def _get_doc_model():
     global _doc_model
     if _doc_model is None:
         from FlagEmbedding import FlagModel
-        _doc_model = FlagModel(_DOC_MODEL_PATH, use_fp16=True)
+        _doc_model = FlagModel(base_model_reference(), use_fp16=True)
         logger.info("bge-base document model loaded (no query instruction)")
     return _doc_model
 

@@ -1,6 +1,5 @@
 """Temporal Cognition configuration."""
-import os
-from pathlib import Path
+from cow.runtime_paths import TEMPORAL_DATA_DIR
 
 # ── Kill Switches ───────────────────────────────────
 TEMPORAL_ENGINE_ENABLED = True
@@ -14,10 +13,7 @@ LOCATION_HISTORY_ENABLED = False   # T5
 SCHEDULE_PRIOR_ENABLED = False     # T6
 
 # ── Paths ───────────────────────────────────────────
-DATA_DIR = Path(os.environ.get(
-    "COW_TEMPORAL_DATA_DIR",
-    str(Path(__file__).resolve().parent / "data"),
-))
+DATA_DIR = TEMPORAL_DATA_DIR
 DB_PATH = DATA_DIR / "world_state.db"
 
 # ── Clock ───────────────────────────────────────────

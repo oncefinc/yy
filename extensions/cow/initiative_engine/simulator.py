@@ -6,7 +6,7 @@ from collections import Counter
 from .engine import process_wake
 from .models import WakeEvent
 from .wakeup import load_state, save_state, on_user_message
-from .config import MAX_PROACTIVE_CANDIDATES_PER_DAY
+from .config import MAX_PROACTIVE_CANDIDATES_PER_DAY, SCENE_STORE_PATH
 
 UTC = timezone.utc
 
@@ -169,7 +169,7 @@ def print_report(report: dict):
 
 
 def simulate_scene_shadow(days: int = 30) -> dict:
-    """Deterministic M2 simulation with real scenes and no LLM/file writes."""
+    """Deterministic M2 simulation with private or bundled synthetic scenes."""
     from pathlib import Path
     from .context_builder import load_scene_candidates
     from .models import ContextSnapshot
@@ -177,8 +177,11 @@ def simulate_scene_shadow(days: int = 30) -> dict:
     from .engine import _thought_to_candidate
     from .gate import evaluate as gate_evaluate
     from .wakeup import set_clock
+    from cow.runtime_paths import REPO_ROOT
 
-    scene_path = Path("d:/cow/cow/memory_engine/data/scenes/scenes_v1.json")
+    scene_path = Path(SCENE_STORE_PATH)
+    if not scene_path.exists():
+        scene_path = REPO_ROOT / "demo" / "fixtures" / "scene_simulation.synthetic.json"
     payload = json.loads(scene_path.read_text("utf-8"))
     receiver_id = payload["scenes"][0]["receiver_id"]
     safe_domains = [

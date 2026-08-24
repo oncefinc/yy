@@ -21,12 +21,11 @@ from .schemas import (
     MemoryRecordV2, MemoryKind, MemoryStatus, SourceType,
     InitiativePolicy, _content_hash,
 )
-from .config import EMBEDDING_DIM, CATEGORY_HALF_LIFE, DEFAULT_HALF_LIFE
+from .config import DATA_DIR, EMBEDDING_DIM, CATEGORY_HALF_LIFE, DEFAULT_HALF_LIFE
 
 logger = logging.getLogger("memory.upsert")
 
 # ── Data Dir ────────────────────────────────────────
-DATA_DIR = Path("d:/cow/cow/memory_engine/data")
 JOURNAL_DIR = DATA_DIR / "journal"
 CHECKPOINT_DIR = DATA_DIR / "checkpoints"
 

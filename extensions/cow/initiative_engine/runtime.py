@@ -10,6 +10,7 @@ from .wakeup import (
     _in_quiet, _next_morning, _to_cst, compute_next_wake, _now,
 )
 from .shadow import flush as shadow_flush
+from cow.runtime_paths import INITIATIVE_DATA_DIR
 
 logger = logging.getLogger("initiative.runtime")
 logger.setLevel(logging.INFO)
@@ -21,7 +22,7 @@ if not logger.handlers:
 UTC = timezone.utc
 _RUNTIME: Runtime | None = None
 _LOCK = threading.Lock()
-_DEFAULT_STATE_PATH = Path("d:/cow/cow/initiative_engine/data/state.json")
+_DEFAULT_STATE_PATH = INITIATIVE_DATA_DIR / "state.json"
 
 
 class Runtime:

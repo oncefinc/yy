@@ -60,9 +60,10 @@ def _vector_search(query_text: str, receiver_id: str, top_k: int = 20) -> list[d
     qv = qv / np.linalg.norm(qv)
 
     import lancedb
+    from cow.memory_engine.config import BASE_LANCE_DIR, MEMORY_SEARCH_INDEX_TABLE
     from cow.memory_engine.schemas import MemoryRecordV2, MemoryStatus, MemoryKind
-    db = lancedb.connect("d:/cow/cow/memory_engine/data/lance_db_base")
-    tbl = db.open_table("memories_base")
+    db = lancedb.connect(str(BASE_LANCE_DIR))
+    tbl = db.open_table(MEMORY_SEARCH_INDEX_TABLE)
     raw = tbl.search(qv.tolist()).limit(top_k * 3).to_list()  # oversample for filter
 
     FILTERED = {MemoryStatus.SUPERSEDED.value, MemoryStatus.ARCHIVED.value}

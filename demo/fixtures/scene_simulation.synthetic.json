@@ -1,0 +1,92 @@
+{
+  "fixture": "public-scene-simulation",
+  "schema_version": 1,
+  "shadow_only": true,
+  "quality_gate": {"passed": true},
+  "scenes": [
+    {
+      "scene_id": "scene:synthetic:fitness",
+      "receiver_id": "example-user",
+      "life_domain": "fitness",
+      "title": "运动与恢复",
+      "summary": "用户过去聊过规律运动和恢复感受，可作为轻量历史话题，但不能推断今天已经训练。",
+      "atom_ids": ["atom:synthetic:fitness"],
+      "confidence": 0.82,
+      "initiative_policy": "never",
+      "sensitivity": "normal",
+      "status": "active"
+    },
+    {
+      "scene_id": "scene:synthetic:gaming",
+      "receiver_id": "example-user",
+      "life_domain": "gaming",
+      "title": "游戏兴趣",
+      "summary": "用户过去聊过游戏体验，可以问最近有没有遇到有趣的局，但不假设正在游戏。",
+      "atom_ids": ["atom:synthetic:gaming"],
+      "confidence": 0.80,
+      "initiative_policy": "never",
+      "sensitivity": "normal",
+      "status": "active"
+    },
+    {
+      "scene_id": "scene:synthetic:hardware",
+      "receiver_id": "example-user",
+      "life_domain": "hardware",
+      "title": "电脑硬件",
+      "summary": "用户过去关注电脑硬件与升级体验，可以延续兴趣，不能把旧配置说成当前配置。",
+      "atom_ids": ["atom:synthetic:hardware"],
+      "confidence": 0.84,
+      "initiative_policy": "never",
+      "sensitivity": "normal",
+      "status": "active"
+    },
+    {
+      "scene_id": "scene:synthetic:work",
+      "receiver_id": "example-user",
+      "life_domain": "work",
+      "title": "工作节奏",
+      "summary": "用户过去聊过工作节奏，只适合开放式询问，不能据此断言当前在公司或加班。",
+      "atom_ids": ["atom:synthetic:work"],
+      "confidence": 0.78,
+      "initiative_policy": "never",
+      "sensitivity": "normal",
+      "status": "active"
+    },
+    {
+      "scene_id": "scene:synthetic:food",
+      "receiver_id": "example-user",
+      "life_domain": "food",
+      "title": "饮食话题",
+      "summary": "用户过去分享过吃饭和做饭话题，可以轻松聊口味，不假设今天吃了什么。",
+      "atom_ids": ["atom:synthetic:food"],
+      "confidence": 0.81,
+      "initiative_policy": "never",
+      "sensitivity": "normal",
+      "status": "active"
+    },
+    {
+      "scene_id": "scene:synthetic:travel",
+      "receiver_id": "example-user",
+      "life_domain": "travel",
+      "title": "旅行见闻",
+      "summary": "用户过去分享过旅行照片与见闻，可回忆画面，不把照片地点当作用户当前位置。",
+      "atom_ids": ["atom:synthetic:travel"],
+      "confidence": 0.80,
+      "initiative_policy": "never",
+      "sensitivity": "normal",
+      "status": "active"
+    },
+    {
+      "scene_id": "scene:synthetic:relationship",
+      "receiver_id": "example-user",
+      "life_domain": "relationship",
+      "title": "朋友相处",
+      "summary": "用户过去表达过希望聊天自然、有边界，可以普通关心，不推断具体情绪。",
+      "atom_ids": ["atom:synthetic:relationship"],
+      "confidence": 0.79,
+      "initiative_policy": "never",
+      "sensitivity": "normal",
+      "status": "active"
+    }
+  ]
+}

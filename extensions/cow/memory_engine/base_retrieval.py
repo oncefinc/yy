@@ -15,6 +15,7 @@ import numpy as np
 from .config import BASE_LANCE_DIR, MEMORY_SEARCH_INDEX_TABLE
 from .retrieval import normalize_query
 from .schemas import MemoryKind, MemoryRecordV2, MemoryStatus
+from cow.runtime_paths import base_model_reference
 
 
 _model = None
@@ -30,7 +31,7 @@ def get_base_model():
             if _model is None:
                 from FlagEmbedding import FlagModel
                 _model = FlagModel(
-                    "D:/cow/models/bge-base-zh-v1.5",
+                    base_model_reference(),
                     query_instruction_for_retrieval=(
                         "为这个句子生成表示以用于检索相关文章："
                     ),

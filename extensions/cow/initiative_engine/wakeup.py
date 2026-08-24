@@ -12,8 +12,9 @@ from .config import (
     WAKE_ERROR_RETRY_MIN, WAKE_ERROR_RETRY_MAX,
     MAX_PROACTIVE_CANDIDATES_PER_DAY,
 )
+from cow.runtime_paths import INITIATIVE_DATA_DIR
 
-_DEFAULT_STATE_PATH = Path("d:/cow/cow/initiative_engine/data/state.json")
+_DEFAULT_STATE_PATH = INITIATIVE_DATA_DIR / "state.json"
 _CRYPTO_RANDOM = random.SystemRandom()
 
 # Thread-safe state lock: prevents daemon and agent_bridge from

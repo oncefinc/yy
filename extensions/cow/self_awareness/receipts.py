@@ -17,10 +17,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from cow.runtime_paths import SELF_AWARENESS_DATA_DIR
+
 
 UTC = timezone.utc
 _lock = threading.Lock()
-_RECEIPT_DIR = Path("d:/cow/cow/self_awareness/data/receipts")
+_RECEIPT_DIR = SELF_AWARENESS_DATA_DIR / "receipts"
 _MAX_DETAIL_CHARS = 180
 _SECRET_KEYS = re.compile(
     r"api[_-]?key|token|authorization|cookie|password|secret|base64|image",

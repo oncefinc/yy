@@ -3,6 +3,8 @@
 import os
 from pathlib import Path
 
+from cow.runtime_paths import INITIATIVE_DATA_DIR, MEMORY_DATA_DIR, env_path
+
 
 def _env_flag(name: str, default: bool) -> bool:
     value = os.environ.get(name)
@@ -10,8 +12,6 @@ def _env_flag(name: str, default: bool) -> bool:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
-
-_PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 
 # ── Kill Switch ─────────────────────────────────────
 DELIVERY_ENABLED = _env_flag("INITIATIVE_DELIVERY_ENABLED", False)
@@ -54,10 +54,9 @@ CURIOSITY_SEARCH_RESULT_COUNT = 5
 
 # ── Memory 2.1 / M2 Scene Shadow ───────────────────
 SCENE_SHADOW_ENABLED = True
-SCENE_STORE_PATH = os.environ.get(
-    "COW_SCENE_STORE_PATH",
-    str(_PACKAGE_ROOT / "memory_engine" / "data" / "scenes" / "scenes_v1.json"),
-)
+SCENE_STORE_PATH = str(env_path(
+    "COW_SCENE_STORE_PATH", MEMORY_DATA_DIR / "scenes" / "scenes_v1.json"
+))
 SCENE_CANDIDATES_PER_WAKE = 2
 
 # One shared taxonomy for M0.5 live retrieval and M1 offline grouping.
@@ -103,8 +102,5 @@ LLM_JUDGE_TIMEOUT_SEC = 15
 LLM_JUDGE_MAX_TOKENS = 200
 
 # ── Shadow ──────────────────────────────────────────
-SHADOW_DIR = os.environ.get(
-    "INITIATIVE_SHADOW_DIR",
-    str(Path(__file__).resolve().parent / "data" / "shadow"),
-)
+SHADOW_DIR = str(env_path("INITIATIVE_SHADOW_DIR", INITIATIVE_DATA_DIR / "shadow"))
 SHADOW_MAX_QUEUE = 50
