@@ -1,7 +1,6 @@
 """Context Builder — real bge-base semantic search, NOT full-table scan."""
 from __future__ import annotations
 import json, logging
-import numpy as np
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from .models import ContextSnapshot
@@ -78,6 +77,8 @@ def _get_model():
 
 def _vector_search(query_text: str, receiver_id: str, top_k: int = 20) -> list[dict]:
     """Real bge-base semantic search with safety filters."""
+    import numpy as np
+
     model = _get_model()
     qv = model.encode(query_text)
     qv = qv / np.linalg.norm(qv)
