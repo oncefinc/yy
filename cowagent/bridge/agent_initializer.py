@@ -141,9 +141,6 @@ class AgentInitializer:
         if session_id:
             self._restore_conversation_history(agent, session_id)
 
-        # Start daily memory flush timer (once, on first agent init regardless of session)
-        self._start_daily_flush_timer()
-
         return agent
 
     def _restore_conversation_history(self, agent, session_id: str) -> None:
@@ -663,8 +660,19 @@ class AgentInitializer:
                     logger.info(f"[DailyFlush] Next flush at {target.strftime('%Y-%m-%d %H:%M:%S')} (in {wait_seconds/3600:.1f}h)")
                     time.sleep(wait_seconds)
 
-                    self._flush_all_agents()
-                    last_run_date = datetime.datetime.now().date()
+                    success = self._flush_all_agents(dream_date=target.date())
+                    if success:
+                        last_run_date = target.date()
+                    else:
+                        # One bounded delayed retry uses the already-written
+                        # daily file.  It never re-summarizes chat or loops.
+                        logger.warning(
+                            "[DeepDream] Scheduled run incomplete; "
+                            "one catch-up retry in 30 minutes"
+                        )
+                        time.sleep(30 * 60)
+                        if self._recover_dream_for_date(target.date()):
+                            last_run_date = target.date()
                 except Exception as e:
                     logger.warning(f"[DailyFlush] Error in daily flush loop: {e}")
                     time.sleep(3600)
@@ -672,16 +680,96 @@ class AgentInitializer:
         t = threading.Thread(target=_daily_flush_loop, daemon=True)
         t.start()
 
-    def _flush_all_agents(self):
-        """Flush memory for all active agent sessions, then run Deep Dream."""
+    def _start_dream_catchup(self):
+        """Start one bounded catch-up after a real user agent is registered.
+
+        ``initialize_agent`` builds the object before AgentBridge publishes it
+        in ``agents``.  Starting recovery inside initialization therefore sees
+        no user-scoped source.  AgentBridge calls this method only after the
+        session has been registered.
+        """
+        if getattr(self.agent_bridge, '_dream_catchup_started', False):
+            return
+        self.agent_bridge._dream_catchup_started = True
+
+        import threading
+
+        def _worker():
+            try:
+                yesterday = datetime.datetime.now().date() - datetime.timedelta(days=1)
+                self._recover_dream_for_date(yesterday)
+            except Exception as e:
+                logger.warning(
+                    f"[DeepDream] Startup catch-up failed-open: {type(e).__name__}"
+                )
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _agent_memory_sources(self):
+        """Return active agents and the first real user-scoped daily source."""
         agents = []
         if self.agent_bridge.default_agent:
             agents.append(("default", self.agent_bridge.default_agent))
         for sid, agent in self.agent_bridge.agents.items():
             agents.append((sid, agent))
 
+        source_user_id = None
+        for label, _agent in agents:
+            label_str = str(label)
+            if label_str != "default" and not label_str.startswith("scheduler_"):
+                source_user_id = label_str
+                break
+        return agents, source_user_id
+
+    def _recover_dream_for_date(self, target_date) -> bool:
+        """Backfill one dated Dream iff a matching daily source exists."""
+        agents, source_user_id = self._agent_memory_sources()
+        managers = [
+            agent.memory_manager.flush_manager
+            for _label, agent in agents
+            if getattr(agent, "memory_manager", None)
+        ]
+        if not managers:
+            return False
+
+        manager = managers[0]
+        dream_file = manager.memory_dir / "dreams" / f"{target_date.isoformat()}.md"
+        if dream_file.exists():
+            return True
+
+        if source_user_id:
+            daily_file = (
+                manager.memory_dir / "users" / source_user_id /
+                f"{target_date.isoformat()}.md"
+            )
+        else:
+            daily_file = manager.memory_dir / f"{target_date.isoformat()}.md"
+
+        if not daily_file.exists() or not daily_file.read_text(
+            encoding="utf-8"
+        ).strip():
+            logger.info(
+                "[DeepDream] Catch-up skipped for %s: no daily source",
+                target_date.isoformat(),
+            )
+            return False
+
+        logger.info(
+            "[DeepDream] Recovering missing diary for %s from %s daily source",
+            target_date.isoformat(),
+            "user-scoped" if source_user_id else "workspace",
+        )
+        return bool(manager.deep_dream(
+            source_user_id=source_user_id,
+            dream_date=target_date,
+        ))
+
+    def _flush_all_agents(self, dream_date=None):
+        """Flush memory for all active agent sessions, then run Deep Dream."""
+        agents, dream_source_user_id = self._agent_memory_sources()
+
         if not agents:
-            return
+            return False
 
         # Phase 1: flush daily summaries
         flushed = 0
@@ -712,15 +800,28 @@ class AgentInitializer:
         if flushed:
             logger.info(f"[DailyFlush] Flushed {flushed}/{len(agents)} agent session(s)")
 
-        # Wait for all flush threads to finish before dreaming
+        # Wait for all Daily writes to finish before Dream reads their files.
+        # Summary calls can legitimately exceed 60s under provider load.
         for t in flush_threads:
-            t.join(timeout=60)
+            t.join(timeout=180)
+            if t.is_alive():
+                logger.warning(
+                    "[DailyFlush] Summary still running after 180s; "
+                    "Dream skipped so it cannot read an incomplete Daily"
+                )
+                return False
 
         # Phase 2: Deep Dream — distill daily memories → MEMORY.md + dream diary
         if dream_candidate:
             try:
-                result = dream_candidate.deep_dream()
+                result = dream_candidate.deep_dream(
+                    source_user_id=dream_source_user_id,
+                    dream_date=dream_date,
+                )
                 if result:
                     logger.info("[DeepDream] Memory distillation completed successfully")
+                return bool(result)
             except Exception as e:
                 logger.warning(f"[DeepDream] Failed: {e}")
+                return False
+        return False

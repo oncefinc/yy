@@ -450,12 +450,17 @@ class AgentBridge:
         """Initialize default super agent"""
         agent = self.initializer.initialize_agent(session_id=None)
         self.default_agent = agent
+        # Start timers only after the agent is published.  Starting from
+        # initialize_agent() races with user-scoped source discovery.
+        self.initializer._start_daily_flush_timer()
         self._on_agent_session_start(None)
 
     def _init_agent_for_session(self, session_id: str):
         """Initialize agent for a specific session"""
         agent = self.initializer.initialize_agent(session_id=session_id)
         self.agents[session_id] = agent
+        self.initializer._start_daily_flush_timer()
+        self.initializer._start_dream_catchup()
         self._on_agent_session_start(session_id)
 
     @staticmethod

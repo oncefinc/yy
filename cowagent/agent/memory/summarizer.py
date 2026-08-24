@@ -249,8 +249,10 @@ class MemoryFlushManager:
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         
         self.last_flush_timestamp: Optional[datetime] = None
+        self._flush_state_lock = threading.Lock()
         self._trim_flushed_hashes: set = set()  # Content hashes of already-flushed messages
         self._last_flushed_content_hash: str = ""  # Content hash at last flush, for daily dedup
+        self._pending_daily_content_hashes: set = set()
         self._last_dream_input_hash: str = ""  # "{date}:{daily_hash}" of last dream, for dedup
         self._last_flush_thread: Optional[threading.Thread] = None
     
@@ -297,6 +299,7 @@ class MemoryFlushManager:
         reason: str = "trim",
         max_messages: int = 0,
         context_summary_callback: Optional[Callable[[str], None]] = None,
+        success_content_hash: str = "",
     ) -> bool:
         """
         Asynchronously summarize and flush messages to daily memory.
@@ -322,14 +325,17 @@ class MemoryFlushManager:
 
             import hashlib
             deduped = []
-            for m in messages:
-                text = self._extract_text_from_content(m.get("content", ""))
-                if not text or not text.strip():
-                    continue
-                h = hashlib.md5(text.encode("utf-8")).hexdigest()
-                if h not in self._trim_flushed_hashes:
-                    self._trim_flushed_hashes.add(h)
-                    deduped.append(m)
+            reserved_hashes = []
+            with self._flush_state_lock:
+                for m in messages:
+                    text = self._extract_text_from_content(m.get("content", ""))
+                    if not text or not text.strip():
+                        continue
+                    h = hashlib.md5(text.encode("utf-8")).hexdigest()
+                    if h not in self._trim_flushed_hashes:
+                        self._trim_flushed_hashes.add(h)
+                        reserved_hashes.append(h)
+                        deduped.append(m)
             if not deduped:
                 return False
 
@@ -337,7 +343,15 @@ class MemoryFlushManager:
             snapshot = copy.deepcopy(deduped)
             thread = threading.Thread(
                 target=self._flush_worker,
-                args=(snapshot, user_id, reason, max_messages, context_summary_callback),
+                args=(
+                    snapshot,
+                    user_id,
+                    reason,
+                    max_messages,
+                    context_summary_callback,
+                    reserved_hashes,
+                    success_content_hash,
+                ),
                 daemon=True,
             )
             thread.start()
@@ -346,6 +360,12 @@ class MemoryFlushManager:
             return True
 
         except Exception as e:
+            # Dispatch failures must not consume the retry reservation.
+            with self._flush_state_lock:
+                for h in locals().get("reserved_hashes", []):
+                    self._trim_flushed_hashes.discard(h)
+                if success_content_hash:
+                    self._pending_daily_content_hashes.discard(success_content_hash)
             logger.warning(f"[MemoryFlush] Failed to dispatch flush (reason={reason}): {e}")
             return False
 
@@ -356,26 +376,38 @@ class MemoryFlushManager:
         reason: str,
         max_messages: int,
         context_summary_callback: Optional[Callable[[str], None]] = None,
+        reserved_hashes: Optional[List[str]] = None,
+        success_content_hash: str = "",
     ):
         """Background worker: summarize with LLM, write daily memory file."""
+        processed = False
         try:
             raw_summary = self._summarize_messages(messages, max_messages)
+            if raw_summary is None:
+                # Provider/transport failure: fail closed and release the
+                # reservation so the same content can be retried later.
+                return
             if _is_empty_sentinel(raw_summary):
                 logger.info(f"[MemoryFlush] No valuable content to flush (reason={reason})")
+                processed = True
                 return
 
             # Strip legacy [DAILY]/[MEMORY] markers if model still outputs them
             daily_part = self._clean_summary_output(raw_summary)
             if not daily_part:
+                processed = True
                 return
 
             # --- Write daily memory ---
-            self.write_daily_summary(
+            written = self.write_daily_summary(
                 daily_part,
                 user_id=user_id,
                 reason=reason,
                 source_messages=messages,
             )
+            if not written:
+                return
+            processed = True
 
             # --- Inject context summary into live messages (if callback provided) ---
             if context_summary_callback:
@@ -388,6 +420,15 @@ class MemoryFlushManager:
 
         except Exception as e:
             logger.warning(f"[MemoryFlush] Async flush failed (reason={reason}): {e}")
+        finally:
+            with self._flush_state_lock:
+                self._pending_daily_content_hashes.discard(success_content_hash)
+                if processed:
+                    if success_content_hash:
+                        self._last_flushed_content_hash = success_content_hash
+                else:
+                    for h in reserved_hashes or []:
+                        self._trim_flushed_hashes.discard(h)
 
     def write_daily_summary(
         self,
@@ -506,26 +547,48 @@ class MemoryFlushManager:
             for m in messages
         )
         content_hash = hashlib.md5(content.encode("utf-8")).hexdigest()
-        if content_hash == self._last_flushed_content_hash:
-            logger.debug("[MemoryFlush] Daily summary skipped: no new content since last flush")
-            return False
-        self._last_flushed_content_hash = content_hash
-        return self.flush_from_messages(
+        with self._flush_state_lock:
+            if (
+                content_hash == self._last_flushed_content_hash
+                or content_hash in self._pending_daily_content_hashes
+            ):
+                logger.debug("[MemoryFlush] Daily summary skipped: no new content or already pending")
+                return False
+            self._pending_daily_content_hashes.add(content_hash)
+        dispatched = self.flush_from_messages(
             messages=messages,
             user_id=user_id,
             reason="daily_summary",
             max_messages=0,
+            success_content_hash=content_hash,
         )
+        if not dispatched:
+            with self._flush_state_lock:
+                self._pending_daily_content_hashes.discard(content_hash)
+        return dispatched
 
     # ---- Deep Dream (memory distillation) ----
 
-    def deep_dream(self, user_id: Optional[str] = None, lookback_days: int = 1, force: bool = False) -> bool:
+    def deep_dream(
+        self,
+        user_id: Optional[str] = None,
+        lookback_days: int = 1,
+        force: bool = False,
+        source_user_id: Optional[str] = None,
+        dream_date=None,
+    ) -> bool:
         """
         Distill recent daily memories into MEMORY.md and generate a dream diary.
 
         Args:
             lookback_days: How many days of daily files to read (default 1 for scheduled, 3 for manual)
             force: Skip input-hash dedup check (used by manual /memory dream trigger)
+            source_user_id: Optional user-scoped daily-memory source.  This is
+                intentionally separate from ``user_id`` so a single-user
+                WeChat session can feed the canonical workspace MEMORY.md and
+                root dream diary without reading or mixing other users.
+            dream_date: Date represented by this dream.  Scheduled runs use
+                today; startup catch-up can explicitly backfill yesterday.
         """
         # Config guard for scheduled runs. Manual trigger (force=True) always
         # runs since it is an explicit user action.
@@ -542,11 +605,20 @@ class MemoryFlushManager:
             logger.warning("[DeepDream] No LLM model available, skipping")
             return False
 
-        logger.info(f"[DeepDream] Starting memory distillation (lookback={lookback_days} days)")
+        target_date = dream_date or datetime.now().date()
+        logger.info(
+            f"[DeepDream] Starting memory distillation "
+            f"(date={target_date.isoformat()}, lookback={lookback_days} days)"
+        )
 
         # Collect materials
         memory_content = self._read_main_memory(user_id)
-        daily_content, has_content = self._read_recent_dailies(user_id, lookback_days)
+        daily_source = source_user_id if source_user_id is not None else user_id
+        daily_content, has_content = self._read_recent_dailies(
+            daily_source,
+            lookback_days,
+            end_date=target_date,
+        )
 
         if not has_content:
             logger.info("[DeepDream] No recent daily records, skipping to preserve existing MEMORY.md")
@@ -558,8 +630,7 @@ class MemoryFlushManager:
         # invalidate the hash on every subsequent call within the same window.
         import hashlib
         daily_hash = hashlib.md5(daily_content.encode("utf-8")).hexdigest()
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        dedup_key = f"{today_str}:{daily_hash}"
+        dedup_key = f"{target_date.isoformat()}:{daily_hash}"
         if not force and dedup_key == self._last_dream_input_hash:
             logger.info("[DeepDream] Already dreamed today with same daily content, skipping")
             return False
@@ -625,7 +696,11 @@ class MemoryFlushManager:
         # Write dream diary
         if dream_diary:
             try:
-                self._write_dream_diary(dream_diary, user_id)
+                self._write_dream_diary(
+                    dream_diary,
+                    user_id,
+                    dream_date=target_date,
+                )
             except Exception as e:
                 logger.warning(f"[DeepDream] Failed to write dream diary: {e}")
 
@@ -640,7 +715,10 @@ class MemoryFlushManager:
         return ""
 
     def _read_recent_dailies(
-        self, user_id: Optional[str] = None, lookback_days: int = 1
+        self,
+        user_id: Optional[str] = None,
+        lookback_days: int = 1,
+        end_date=None,
     ) -> tuple:
         """
         Read recent daily memory files.
@@ -652,7 +730,7 @@ class MemoryFlushManager:
 
         parts = []
         has_content = False
-        today = datetime.now().date()
+        today = end_date or datetime.now().date()
 
         for offset in range(lookback_days):
             day = today - timedelta(days=offset)
@@ -664,6 +742,7 @@ class MemoryFlushManager:
 
             if daily_file.exists():
                 content = daily_file.read_text(encoding="utf-8").strip()
+                content = self._sanitize_daily_for_dream(content)
                 if content:
                     parts.append(f"### {date_str}\n\n{content}")
                     has_content = True
@@ -671,6 +750,33 @@ class MemoryFlushManager:
                 parts.append(f"### {date_str}\n\n(no records)")
 
         return "\n\n".join(parts), has_content
+
+    @staticmethod
+    def _sanitize_daily_for_dream(content: str) -> str:
+        """Exclude legacy raw-conversation fallback sections from Dream input.
+
+        Older Daily code wrote ``用户: ... → 回复: ...`` lines when the
+        summarizer provider failed.  Keep those files untouched for audit, but
+        never let their unverified assistant text become Dream evidence.
+        """
+        if not content:
+            return ""
+        sections = re.split(r"(?=^##\s+)", content, flags=re.MULTILINE)
+        kept = []
+        removed = 0
+        for section in sections:
+            has_raw_user_line = re.search(r"(?m)^-\s*用户:\s*", section)
+            has_raw_reply_join = "→ 回复:" in section
+            if has_raw_user_line and has_raw_reply_join:
+                removed += 1
+                continue
+            kept.append(section.rstrip())
+        if removed:
+            logger.warning(
+                "[DeepDream] Excluded %d legacy raw-fallback Daily section(s)",
+                removed,
+            )
+        return "\n\n".join(part for part in kept if part).strip()
 
     @staticmethod
     def _parse_dream_output(raw: str) -> tuple:
@@ -690,7 +796,12 @@ class MemoryFlushManager:
 
         return new_memory, dream_diary
 
-    def _write_dream_diary(self, content: str, user_id: Optional[str] = None):
+    def _write_dream_diary(
+        self,
+        content: str,
+        user_id: Optional[str] = None,
+        dream_date=None,
+    ):
         """Write dream diary to memory/dreams/YYYY-MM-DD.md.
 
         Safety: If the file already exists, APPEND a new section instead of
@@ -702,7 +813,7 @@ class MemoryFlushManager:
             dreams_dir = self.memory_dir / "users" / user_id / "dreams"
         dreams_dir.mkdir(parents=True, exist_ok=True)
 
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = (dream_date or datetime.now().date()).strftime("%Y-%m-%d")
         diary_file = dreams_dir / f"{today}.md"
 
         # ── Anti-overwrite: append if file already exists ──
@@ -733,7 +844,8 @@ class MemoryFlushManager:
         """
         Summarize conversation messages using LLM.
         Returns empty string if LLM deems content not worth recording.
-        Rule-based fallback only used when LLM call raises an exception.
+        Provider failures fail closed so raw conversation is never promoted to
+        Daily memory.  The caller releases its reservation for a later retry.
         """
         conversation_text = self._format_conversation_for_summary(messages, max_messages)
         if not conversation_text.strip():
@@ -747,11 +859,14 @@ class MemoryFlushManager:
                 logger.info("[MemoryFlush] LLM returned empty sentinel, skipping write")
                 return ""
             except Exception as e:
-                logger.warning(f"[MemoryFlush] LLM summarization failed, using fallback: {e}")
-                return self._extract_summary_fallback(messages, max_messages)
+                logger.warning(
+                    "[MemoryFlush] LLM summarization failed; Daily write skipped "
+                    f"and remains retryable: {type(e).__name__}"
+                )
+                return None
         else:
-            logger.info("[MemoryFlush] No LLM model available, using rule-based fallback")
-            return self._extract_summary_fallback(messages, max_messages)
+            logger.warning("[MemoryFlush] No LLM model available; Daily write skipped")
+            return None
 
     def _format_conversation_for_summary(self, messages: List[Dict], max_messages: int = 0) -> str:
         """Format messages into readable conversation text for LLM summarization."""
