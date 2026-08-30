@@ -28,9 +28,11 @@ class ContextSnapshot:
     last_assistant_message_at: Optional[str] = None
     last_proactive_candidate_at: Optional[str] = None
     proactive_candidates_today: int = 0
+    # Derived from actual proactive-delivery receipts. This controls only
+    # future proactive outreach; direct user messages always receive replies.
     proactive_policy_allowed: bool = True
     proactive_policy_reason: str = ""
-    proactive_policy_mode: str = "normal"
+    proactive_policy_mode: str = "normal"  # normal|reduced|paused
     proactive_daily_limit: int = 2
     proactive_not_before: Optional[str] = None
     quiet_hours: bool = False
@@ -52,13 +54,20 @@ class ContextSnapshot:
     # Recent explicit conversation subjects captured by the chat hook.  These
     # are short-lived topic signals, not long-term memories or current facts.
     recent_topics: list[dict] = field(default_factory=list)
+    # C1 Shadow: structured curiosity questions with provenance/lifecycle.
+    # They are observable here but deliberately not candidates for Gate yet.
     curiosity_pool_shadow: list[dict] = field(default_factory=list)
+    # Conversation continuity is short-lived runtime context.  It prevents a
+    # same-day conversation from being treated like a long absence and keeps
+    # unresolved "tell me when it is done" expectations from being ignored.
     same_day_contact: bool = False
     user_messages_today: int = 0
     last_user_period: str = ""
     current_period: str = ""
     pending_followup: dict = field(default_factory=dict)
-    day_type: str = "unknown"
+    # Calendar context is a weak phrasing hint only.  It must never be used as
+    # proof that the user is currently at work or resting.
+    day_type: str = "unknown"  # workday|weekend|holiday|unknown
     day_type_source: str = ""
 
 @dataclass
@@ -112,6 +121,9 @@ class ThoughtSeed:
     curiosity_topic_hash: str = ""
     curiosity_observed_at: str = ""
     curiosity_occurrence_count: int = 0
+    curiosity_parent_ids: list[str] = field(default_factory=list)
+    curiosity_source_question: str = ""
+    curiosity_novelty_from_source: float = 0.0
     search_result_count: int = 0
 
     def make_dedupe_key(self) -> str:

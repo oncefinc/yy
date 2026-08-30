@@ -11,7 +11,10 @@ from .shadow import log_decision
 from .delivery import deliver
 from .context_builder import build_context
 from .motives import generate as generate_candidates
-from .thoughts import generate as generate_thoughts, curiosity_suppression_reason
+from .thoughts import (
+    generate as generate_thoughts,
+    curiosity_suppression_reason,
+)
 from .llm_worker import submit as llm_submit, stats as llm_stats
 from .validator import validate as validate_draft
 
@@ -97,6 +100,9 @@ def process_wake(event: WakeEvent, state_path: Path | None = None) -> Initiative
             if item.get("status") == "active"
         ),
         "curiosity_pool_runtime_enabled": False,
+        "curiosity_forge_metrics": dict(
+            state.get("curiosity_forge_metrics", {}) or {}
+        ),
         "proactive_policy_mode": ctx.proactive_policy_mode,
         "proactive_policy_reason": ctx.proactive_policy_reason,
         "proactive_daily_limit": ctx.proactive_daily_limit,
@@ -194,6 +200,7 @@ def process_wake(event: WakeEvent, state_path: Path | None = None) -> Initiative
 
     # 4b. If gate says send_candidate and we have a matching ThoughtSeed, try LLM draft
     draft_msg = ""
+    exploration_only = False
     if decision == "send_candidate" and selected:
         matching_thought = None
         for t in valid_thoughts:
@@ -230,11 +237,17 @@ def process_wake(event: WakeEvent, state_path: Path | None = None) -> Initiative
                     obs["curiosity_receipt_id"] = matching_thought.action_receipt_id
                     obs["curiosity_source_count"] = len(matching_thought.source_urls)
                     obs["curiosity_result_count"] = matching_thought.search_result_count
-            if matching_thought is not None:
+                    # One-function-per-wake: evidence gathering is this wake's
+                    # action. Expression is evaluated separately on a later
+                    # wake instead of searching and messaging in one cycle.
+                    exploration_only = True
+                    decision = "silent"
+                    reasons = ["CURIOSITY_EVIDENCE_CAPTURED"]
+            if matching_thought is not None and not exploration_only:
                 draft = llm_submit(matching_thought, ctx)
             else:
                 draft = None
-            if draft and matching_thought is not None:
+            if draft and matching_thought is not None and not exploration_only:
                 validated = validate_draft(
                     draft, matching_thought, 0,
                     MAX_PROACTIVE_CANDIDATES_PER_DAY, ctx=ctx,
@@ -248,7 +261,7 @@ def process_wake(event: WakeEvent, state_path: Path | None = None) -> Initiative
                         obs["curiosity_suppressed_reason"] = ";".join(
                             validated.rejection_reasons
                         )
-            elif matching_thought is not None:
+            elif matching_thought is not None and not exploration_only:
                 decision = "silent"
                 reasons = ["LLM_FAILED_OR_BUDGET"]
                 if matching_thought.thought_type == "curiosity":
@@ -258,7 +271,7 @@ def process_wake(event: WakeEvent, state_path: Path | None = None) -> Initiative
     revisit_after = ""
     next_wake = compute_next_wake(
         decision, ctx.proactive_candidates_today,
-        ctx.minutes_since_user_message, event.trigger_type,
+        ctx.minutes_since_user_message, event.trigger_type
     )
     if decision == "revisit_later" and selected:
         from .revisit import compute_revisit_due
@@ -293,6 +306,8 @@ def process_wake(event: WakeEvent, state_path: Path | None = None) -> Initiative
                 from .proactive_receipts import record_delivery
                 record_delivery(d, selected)
             except Exception as receipt_error:
+                # A receipt failure must never turn a confirmed send into a
+                # false delivery result.
                 d.reason_codes.append("RECEIPT_WRITE_FAILED")
                 d.reason_summary += (
                     f"; RECEIPT_WRITE_FAILED:{type(receipt_error).__name__}"
@@ -301,15 +316,41 @@ def process_wake(event: WakeEvent, state_path: Path | None = None) -> Initiative
             d.reason_codes.append("DELIVERY_FAILED")
             d.reason_summary += "; DELIVERY_FAILED"
 
+    # P2 bounded loop control: one action label, honest idle, progress-aware
+    # pacing. The scheduler still owns wake creation; no self-trigger exists.
+    from .loop_control import (
+        choose_wake_action,
+        classify_progress,
+        controlled_next_wake,
+    )
+    wake_action = choose_wake_action(d.decision, obs)
+    loop_progress = classify_progress(d, obs)
+    controlled = controlled_next_wake(
+        datetime.fromisoformat(d.next_wake_at),
+        progress=loop_progress,
+        state=state,
+        now=_now(),
+    )
+    if d.revisit_after:
+        controlled = min(controlled, datetime.fromisoformat(d.revisit_after))
+    d.next_wake_at = controlled.isoformat()
+    obs["wake_action"] = wake_action
+    obs["loop_progress"] = loop_progress
+    obs["loop_self_trigger_enabled"] = False
+
     # Audit every decision, including actual delivery outcome.
     log_decision(d, obs_counters=obs)
-    _update_state(d, state_path, selected_by_gate, selected)
+    _update_state(
+        d, state_path, selected_by_gate, selected,
+        loop_progress=loop_progress, wake_action=wake_action,
+    )
     return d
 
 
 def _update_state(d: InitiativeDecision, sp: Path | None = None,
                   selected: MotiveCandidate | None = None,
-                  evaluated_candidate: MotiveCandidate | None = None):
+                  evaluated_candidate: MotiveCandidate | None = None,
+                  *, loop_progress: str = "", wake_action: str = ""):
     """Thread-safe state update via atomic_update."""
     from .wakeup import atomic_update
 
@@ -360,5 +401,13 @@ def _update_state(d: InitiativeDecision, sp: Path | None = None,
             now=datetime.fromisoformat(d.created_at),
             delivery_enabled=DELIVERY_ENABLED,
         )
+        if loop_progress:
+            from .loop_control import apply_loop_state
+            apply_loop_state(
+                state,
+                progress=loop_progress,
+                wake_action=wake_action or "idle",
+                now=datetime.fromisoformat(d.created_at),
+            )
 
     atomic_update(_apply, sp)

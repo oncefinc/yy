@@ -73,6 +73,11 @@ CURIOSITY_EPHEMERAL_TTL_MINUTES = 90
 CURIOSITY_POOL_SHADOW_ENABLED = True
 CURIOSITY_POOL_MAX_ITEMS = 30
 CURIOSITY_POOL_TTL_DAYS = 7
+# C2B QuestionForge may only write runtime-disabled children into the Shadow
+# pool. It cannot search, enter Gate, authorize delivery, or count as interest.
+CURIOSITY_QUESTION_FORGE_SHADOW_ENABLED = True
+CURIOSITY_QUESTION_FORGE_MAX_CHILDREN = 3
+CURIOSITY_QUESTION_FORGE_MIN_FINDING_CHARS = 30
 
 # ── Memory 2.1 / M2 Scene Shadow ───────────────────
 SCENE_SHADOW_ENABLED = True

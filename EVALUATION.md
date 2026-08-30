@@ -136,3 +136,31 @@ pool alone cannot trigger search or delivery.
 
 The next empirical comparison should report confirmed deliveries, response
 categories, revisit outcomes, and curiosity provenance—not only wake counts.
+
+## Curiosity provenance and bounded-loop contract
+
+The public implementation includes a deterministic behavior suite for the
+latest curiosity provenance and wake-control boundaries:
+
+```bash
+python -m cow.initiative_engine.behavior_eval
+```
+
+The first version contains 17 synthetic cases across provenance, temporal
+expiry, novelty, grounding, QuestionForge, progress classification, recovery,
+and single-action wake semantics. The suite specifically checks that:
+
+- a user task or direct user question cannot become autonomous curiosity;
+- a short-lived choice such as today's lunch is not durable research;
+- one memory is insufficient for a memory-association claim;
+- QuestionForge children remain runtime-disabled and interest-ineligible;
+- one wake performs only one top-level action (`explore`, `outreach`,
+  `revisit`, or `idle`);
+- obtaining evidence does not authorize an outbound message in the same wake;
+- idle and error outcomes increase the minimum wake interval without creating
+  a self-triggering loop.
+
+The report contains case IDs and structured outcomes only; it does not copy
+private chat text. Passing these cases establishes conformance to the published
+contract, not real-user benefit. Cross-process ownership leases and an external
+process watchdog are also outside this bounded-loop milestone.

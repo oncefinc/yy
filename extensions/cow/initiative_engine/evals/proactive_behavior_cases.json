@@ -1,0 +1,146 @@
+{
+  "suite_version": 1,
+  "description": "银月主动行为与好奇心的离线、无网络、可复现评测集",
+  "cases": [
+    {
+      "case_id": "curiosity-user-task",
+      "category": "provenance",
+      "kind": "curiosity_guard",
+      "question": "帮我查一下这个开源项目",
+      "origin": "user_task",
+      "expected": {"allowed": false, "reason": "USER_TASK"}
+    },
+    {
+      "case_id": "curiosity-direct-user-question",
+      "category": "provenance",
+      "kind": "curiosity_guard",
+      "question": "AI怎么产生真正的好奇心？",
+      "origin": "knowledge_question",
+      "expected": {"allowed": false, "reason": "DIRECT_USER_QUESTION"}
+    },
+    {
+      "case_id": "curiosity-lunch-expiry-class",
+      "category": "temporal",
+      "kind": "curiosity_guard",
+      "question": "中午吃什么？",
+      "origin": "ephemeral_choice",
+      "expected": {"allowed": false, "reason": "EPHEMERAL_CHOICE"}
+    },
+    {
+      "case_id": "curiosity-runtime-question",
+      "category": "provenance",
+      "kind": "curiosity_guard",
+      "question": "银月是不是重启了？",
+      "origin": "assistant_runtime",
+      "expected": {"allowed": false, "reason": "ASSISTANT_RUNTIME_TOPIC"}
+    },
+    {
+      "case_id": "curiosity-source-replay",
+      "category": "novelty",
+      "kind": "curiosity_guard",
+      "question": "医美行业最近发生了哪些变化？",
+      "origin": "task_extension",
+      "source_question": "医美行业最近有什么变化？",
+      "parent_ids": ["task-1"],
+      "expected": {"allowed": false, "reason": "SOURCE_REPLAY"}
+    },
+    {
+      "case_id": "curiosity-real-extension",
+      "category": "novelty",
+      "kind": "curiosity_guard",
+      "question": "医美伦理争议为什么集中在未成年人？",
+      "origin": "task_extension",
+      "source_question": "帮我查医美行业最近有什么变化",
+      "parent_ids": ["task-1"],
+      "expected": {"allowed": true, "reason": ""}
+    },
+    {
+      "case_id": "curiosity-memory-single-parent",
+      "category": "grounding",
+      "kind": "curiosity_guard",
+      "question": "陪伴式AI为什么容易显得像客服？",
+      "origin": "memory_association",
+      "parent_ids": ["memory-1"],
+      "expected": {"allowed": false, "reason": "INSUFFICIENT_MEMORY_PARENTS"}
+    },
+    {
+      "case_id": "curiosity-memory-two-parents",
+      "category": "grounding",
+      "kind": "curiosity_guard",
+      "question": "陪伴式AI为什么容易显得像客服？",
+      "origin": "memory_association",
+      "parent_ids": ["memory-1", "memory-2"],
+      "expected": {"allowed": true, "reason": ""}
+    },
+    {
+      "case_id": "forge-self-awareness",
+      "category": "question_forge",
+      "kind": "seed_forge",
+      "question": "AI为什么会产生自我意识？",
+      "now": "2026-08-30T04:00:00+00:00",
+      "expected": {"count": 1, "all_runtime_disabled": true, "all_interest_ineligible": true}
+    },
+    {
+      "case_id": "forge-first-person-operation",
+      "category": "question_forge",
+      "kind": "seed_forge",
+      "question": "我怎么把这个Agent接入工作台？",
+      "now": "2026-08-30T04:00:00+00:00",
+      "expected": {"count": 0, "all_runtime_disabled": true, "all_interest_ineligible": true}
+    },
+    {
+      "case_id": "forge-shallow-tool-question",
+      "category": "question_forge",
+      "kind": "seed_forge",
+      "question": "txt能触发吗？",
+      "now": "2026-08-30T04:00:00+00:00",
+      "expected": {"count": 0, "all_runtime_disabled": true, "all_interest_ineligible": true}
+    },
+    {
+      "case_id": "loop-visible-action",
+      "category": "loop_control",
+      "kind": "loop_progress",
+      "decision": "send_candidate",
+      "delivery_allowed": true,
+      "expected": {"progress": "visible_action"}
+    },
+    {
+      "case_id": "loop-search-progress",
+      "category": "loop_control",
+      "kind": "loop_progress",
+      "decision": "silent",
+      "obs": {"curiosity_search_performed": true, "curiosity_source_count": 2},
+      "expected": {"progress": "evidence_progress"}
+    },
+    {
+      "case_id": "loop-honest-idle",
+      "category": "loop_control",
+      "kind": "loop_progress",
+      "decision": "silent",
+      "expected": {"progress": "idle"}
+    },
+    {
+      "case_id": "loop-error-recovery",
+      "category": "recovery",
+      "kind": "loop_progress",
+      "decision": "silent",
+      "reason_codes": ["CURIOSITY_SEARCH_FAILED"],
+      "expected": {"progress": "error"}
+    },
+    {
+      "case_id": "action-explore-only",
+      "category": "single_action",
+      "kind": "wake_action",
+      "decision": "silent",
+      "obs": {"curiosity_search_performed": true},
+      "expected": {"action": "explore"}
+    },
+    {
+      "case_id": "action-outreach-only",
+      "category": "single_action",
+      "kind": "wake_action",
+      "decision": "send_candidate",
+      "expected": {"action": "outreach"}
+    }
+  ]
+}

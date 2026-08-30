@@ -1,4 +1,4 @@
-"""CuriosityPool Shadow: provenance and lifecycle, no autonomous action."""
+"""C1 CuriosityPool Shadow: provenance and lifecycle, no autonomous action."""
 from __future__ import annotations
 
 from copy import deepcopy
@@ -9,6 +9,7 @@ from .config import (
     CURIOSITY_POOL_SHADOW_ENABLED,
     CURIOSITY_POOL_TTL_DAYS,
 )
+
 
 UTC = timezone.utc
 
@@ -24,13 +25,17 @@ def _parse(value: object) -> datetime | None:
 
 
 def _question(topic: str) -> str:
-    return str(topic or "").strip()[:160]
+    """Keep an already explicit question; never invent a research direction."""
+    value = str(topic or "").strip()[:160]
+    return value
 
 
 def maintain_pool(state: dict, now: datetime) -> None:
+    """Expire stale active questions in-place while retaining audit history."""
     current = now.astimezone(UTC)
+    pool = state.get("curiosity_pool", []) or []
     clean = []
-    for item in state.get("curiosity_pool", []) or []:
+    for item in pool:
         if not isinstance(item, dict) or not item.get("curiosity_id"):
             continue
         row = dict(item)
@@ -45,6 +50,7 @@ def maintain_pool(state: dict, now: datetime) -> None:
 
 
 def observe_topic_signal(state: dict, signal: dict, now: datetime) -> dict | None:
+    """Capture only a genuine user knowledge question into the Shadow pool."""
     if not CURIOSITY_POOL_SHADOW_ENABLED or not isinstance(signal, dict):
         return None
     from .wakeup import _effective_topic_origin
@@ -97,8 +103,12 @@ def observe_topic_signal(state: dict, signal: dict, now: datetime) -> dict | Non
         "updated_at": current.isoformat(),
         "valid_until": valid_until.isoformat(),
         "closed_at": None,
-        "occurrence_count": max(1, int(signal.get("occurrence_count", 1) or 1)),
+        "occurrence_count": max(
+            1, int(signal.get("occurrence_count", 1) or 1)
+        ),
         "transition_reason": "CAPTURED_FROM_EXPLICIT_QUESTION",
+        # C1 is a Shadow data model only. C2 may promote a question after
+        # evidence-backed exploration; C1 itself cannot search or send.
         "runtime_enabled": False,
         "search_status": "not_started",
     }
@@ -108,6 +118,7 @@ def observe_topic_signal(state: dict, signal: dict, now: datetime) -> dict | Non
 
 
 def pool_snapshot(state: dict, now: datetime) -> list[dict]:
+    """Return a lifecycle-correct copy without mutating persisted state."""
     shadow_state = {"curiosity_pool": deepcopy(state.get("curiosity_pool", []))}
     maintain_pool(shadow_state, now)
     return list(shadow_state["curiosity_pool"])
@@ -125,7 +136,11 @@ def record_exploration(
     finding_summary: str = "",
     failure_reason: str = "",
 ) -> dict | None:
-    """Attach verifiable exploration outcome to an existing C1 question."""
+    """Attach verifiable exploration outcome to an existing C1 question.
+
+    This records externally observable findings, not hidden reasoning. It does
+    not generate child questions and does not make the pool runtime-active.
+    """
     current = now.astimezone(UTC)
     maintain_pool(state, current)
     item = next((
@@ -167,6 +182,13 @@ def record_exploration(
         item["search_status"] = "success"
         item["no_progress_count"] = 0
         item["transition_reason"] = "NEW_VERIFIABLE_EVIDENCE"
+        try:
+            from .question_forge import forge_into_pool
+            forge_into_pool(state, item, current)
+        except Exception:
+            # QuestionForge is Shadow observability.  A forge defect must not
+            # rewrite exploration success or affect the live initiative path.
+            item["question_forge_error"] = True
     else:
         count = int(item.get("no_progress_count", 0) or 0) + 1
         item["no_progress_count"] = count

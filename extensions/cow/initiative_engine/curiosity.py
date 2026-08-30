@@ -29,16 +29,28 @@ def _topic_hash(topic: str) -> str:
     return hashlib.sha256(topic.casefold().encode("utf-8")).hexdigest()[:16]
 
 
-def _search_query_rejection_reason(topic: str) -> str:
-    """Second-line semantic guard before budget claim or network access."""
-    from .wakeup import _classify_topic_origin
+def _search_query_rejection_reason(
+    topic: str,
+    *,
+    origin: str = "",
+    source_question: str = "",
+    parent_ids: list[str] | tuple[str, ...] = (),
+) -> str:
+    """Final deterministic guard before budget claim or network access."""
+    from .curiosity_guard import assess_curiosity_query
+    from .wakeup import _classify_topic_origin, _effective_topic_origin
 
-    return {
-        "user_task": "USER_TASK",
-        "ephemeral_choice": "EPHEMERAL_CHOICE",
-        "assistant_runtime": "ASSISTANT_RUNTIME_TOPIC",
-        "conversation_reaction": "CONVERSATION_REACTION",
-    }.get(_classify_topic_origin(topic), "")
+    effective_origin = (
+        _effective_topic_origin(topic, origin)
+        if origin else _classify_topic_origin(topic)
+    )
+    decision = assess_curiosity_query(
+        topic,
+        effective_origin,
+        source_question=source_question,
+        parent_ids=parent_ids,
+    )
+    return decision.reason
 
 
 def _claim_budget(topic: str, state_path: Path | None) -> tuple[bool, str]:
@@ -132,6 +144,8 @@ def _finish_budget(
                 failure_reason=failure_reason,
             )
         except Exception:
+            # Pool synchronization is Shadow observability and must not change
+            # budget correctness or make a successful search look failed.
             pass
 
     atomic_update(_update, state_path)
@@ -174,14 +188,12 @@ def enrich_with_web_search(
     topic = _topic_from_thought(thought)
     if not topic:
         return None, "CURIOSITY_EMPTY_TOPIC"
-    if thought.curiosity_origin and thought.curiosity_origin != "knowledge_question":
-        return None, {
-            "user_task": "USER_TASK",
-            "ephemeral_choice": "EPHEMERAL_CHOICE",
-            "assistant_runtime": "ASSISTANT_RUNTIME_TOPIC",
-            "conversation_reaction": "CONVERSATION_REACTION",
-        }.get(thought.curiosity_origin, "NO_KNOWLEDGE_GAP")
-    query_rejection = _search_query_rejection_reason(topic)
+    query_rejection = _search_query_rejection_reason(
+        topic,
+        origin=thought.curiosity_origin,
+        source_question=thought.curiosity_source_question,
+        parent_ids=thought.curiosity_parent_ids,
+    )
     if query_rejection:
         return None, query_rejection
 

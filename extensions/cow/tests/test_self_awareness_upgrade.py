@@ -168,7 +168,7 @@ class TestCuriositySignals:
         from cow.initiative_engine.wakeup import _extract_topic_signal
         assert _extract_topic_signal(text, "m1", datetime.now(timezone.utc)) is None
 
-    def test_curiosity_thought_uses_recent_event(self):
+    def test_direct_user_question_does_not_become_runtime_curiosity(self):
         from cow.initiative_engine.models import ContextSnapshot
         from cow.initiative_engine.thoughts import _curiosity
         now = datetime.now(timezone.utc)
@@ -178,9 +178,7 @@ class TestCuriositySignals:
             "observed_at": (now - timedelta(hours=3)).isoformat(),
         }])
         rows = _curiosity(ctx, now)
-        assert len(rows) == 1
-        assert rows[0].thought_type == "curiosity"
-        assert rows[0].evidence_event_ids == ["evt-topic"]
+        assert rows == []
 
     def test_gate_requires_curiosity_event_evidence(self):
         from cow.initiative_engine.gate import has_valid_grounding
@@ -213,8 +211,11 @@ class TestCuriosityReceipts:
         }))
         thought = ThoughtSeed(
             thought_type="curiosity",
-            subject="想继续弄明白：AI真正的好奇心",
+            subject="想继续弄明白：哪些证据能区分AI自主探索与任务执行？",
             evidence_event_ids=["evt"],
+            curiosity_origin="prior_curiosity",
+            curiosity_parent_ids=["cq-parent"],
+            curiosity_source_question="AI怎么产生真正的好奇心？",
         )
         enriched, reason = enrich_with_web_search(
             thought,

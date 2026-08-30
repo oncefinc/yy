@@ -39,6 +39,10 @@ jobs:
           extensions/cow/initiative_engine/tests/test_proactive_policy.py
           extensions/cow/initiative_engine/tests/test_revisit.py
           extensions/cow/initiative_engine/tests/test_curiosity_pool.py
+          extensions/cow/initiative_engine/tests/test_curiosity_source_guard.py
+          extensions/cow/initiative_engine/tests/test_question_forge_shadow.py
+          extensions/cow/initiative_engine/tests/test_loop_control.py
+          extensions/cow/initiative_engine/tests/test_behavior_eval.py
           extensions/cow/tests/test_initiative_conversation_continuity.py
           extensions/cow/tests/test_portable_paths.py
           cowagent/tests/test_optional_hook_health.py
@@ -47,3 +51,7 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}/extensions:${{ github.workspace }}/cowagent:${{ github.workspace }}/demo
         run: python demo/initiative_decision_demo.py --json
+      - name: Run proactive behavior contract
+        env:
+          PYTHONPATH: ${{ github.workspace }}/extensions:${{ github.workspace }}/cowagent
+        run: python -m cow.initiative_engine.behavior_eval

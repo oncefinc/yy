@@ -251,6 +251,11 @@ def _curiosity(ctx: ContextSnapshot, now: datetime) -> list[ThoughtSeed]:
             curiosity_occurrence_count=max(
                 1, int(item.get("occurrence_count", 1) or 1)
             ),
+            curiosity_parent_ids=list(item.get("parent_ids", []) or []),
+            curiosity_source_question=str(item.get("source_question", "")),
+            curiosity_novelty_from_source=float(
+                item.get("novelty_from_source", 0.0) or 0.0
+            ),
         )]
     return []
 
@@ -305,8 +310,15 @@ def _curiosity_topic_rejection_reason(
         if valid_until is not None and now.astimezone(UTC) >= valid_until:
             return "EPHEMERAL_EXPIRED"
         return "EPHEMERAL_CHOICE"
-    if effective != "knowledge_question":
-        return "NO_KNOWLEDGE_GAP"
+    from .curiosity_guard import assess_curiosity_query
+    guard = assess_curiosity_query(
+        topic,
+        effective,
+        source_question=str(item.get("source_question", "")),
+        parent_ids=list(item.get("parent_ids", []) or []),
+    )
+    if not guard.allowed:
+        return guard.reason
 
     minimum = (CURIOSITY_MIN_TOPIC_AGE_MINUTES if min_age_minutes is None
                else min_age_minutes)
@@ -345,7 +357,7 @@ def _memory_associations(ctx, weekday, hour):
                 life_domain="general", relevance=0.6, novelty=0.5,
                 confidence=0.7,
             ))
-        if 19 <= hour <= 22 and any(w in content for w in ["游戏","射击游戏","动漫","小说","电影"]):
+        if 19 <= hour <= 22 and any(w in content for w in ["游戏","三角洲","动漫","小说","电影"]):
             thoughts.append(ThoughtSeed(
                 thought_type="memory_association",
                 subject=f"晚间想起: {summary[:40]}",

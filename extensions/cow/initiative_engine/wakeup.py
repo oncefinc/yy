@@ -63,6 +63,8 @@ def _default_state() -> dict:
         "curiosity_daily_date": "", "curiosity_search_count": 0,
         "curiosity_history": [], "curiosity_inflight": None,
         "curiosity_pool": [],
+        "curiosity_forge_metrics": {},
+        "initiative_loop_control": {},
         "debounce_pending": False, "consecutive_wake_failures": 0,
         "engine_version": "m1_v2",
     }
@@ -232,6 +234,10 @@ _CONVERSATION_REACTION = re.compile(
     r".{0,28}(?:怎么回事|咋回事|怎么了|咋了|什么情况|真的假的|又来|活过来)",
     re.I,
 )
+
+# A user can explicitly leave a conversational obligation behind.  This is
+# intentionally generic (not tied to restart/fitness/work) and stores only the
+# obligation type plus timing, never the original message.
 _FOLLOWUP_EXPECTATION = re.compile(
     r"(?:记得|好了|弄好|处理好|完成后|结束后|回来后?|恢复后?)"
     r".{0,16}(?:告诉我|跟我说|说一声|通知我|回我)",
@@ -247,7 +253,8 @@ PENDING_FOLLOWUP_TTL_HOURS = 24
 USER_TASK_ORIGINS = frozenset(("user_task", "user_search_request"))
 TOPIC_ORIGINS = frozenset((
     "user_task", "ephemeral_choice", "knowledge_question", "user_topic",
-    "assistant_runtime", "conversation_reaction",
+    "assistant_runtime", "conversation_reaction", "task_extension",
+    "memory_association", "prior_curiosity", "ambient_discovery",
 ))
 
 
@@ -260,12 +267,21 @@ def _classify_topic_origin(text: str) -> str:
     value = str(text or "").strip()
     if _EXPLICIT_SEARCH_REQUEST.search(value) or _EN_SEARCH_REQUEST.search(value):
         return "user_task"
+    # A time-bound personal choice is not a durable information gap.  This
+    # check intentionally runs before generic question detection so that
+    # "中午吃什么" cannot become background research merely due to "什么".
     if _EPHEMERAL_CHOICE.search(value):
         return "ephemeral_choice"
+    # Questions about Silver Moon's current process/model/error state are part
+    # of the live conversation.  Sending them to web search produces nonsense
+    # and does not represent autonomous curiosity.
     if _ASSISTANT_RUNTIME_TOPIC.search(value):
         return "assistant_runtime"
     if _CONVERSATION_REACTION.search(value):
         return "conversation_reaction"
+    # A user reflecting on a subject is a conversational topic, not yet a
+    # well-formed research question. A trailing question mark still makes the
+    # user's intent explicit and is handled below.
     if _USER_REFLECTION.search(value) and "?" not in value and "？" not in value:
         return "user_topic"
     if "?" in value or "？" in value or _KNOWLEDGE_QUESTION.search(value):
@@ -274,11 +290,14 @@ def _classify_topic_origin(text: str) -> str:
 
 
 def _effective_topic_origin(text: str, stored_origin: str = "") -> str:
-    """Return the current origin while safely migrating legacy labels."""
+    """Return the C0A origin while safely migrating persisted legacy labels."""
     origin = str(stored_origin or "").strip()
     if origin in USER_TASK_ORIGINS:
         return "user_task"
     if origin == "knowledge_question":
+        # Reclassify persisted records through newer, stricter exclusions.
+        # This safely migrates old "啊？你咋活过来了" rows without rewriting
+        # production state.json, while preserving genuine knowledge questions.
         current = _classify_topic_origin(text)
         if current in {
             "user_task", "ephemeral_choice", "assistant_runtime",
@@ -288,10 +307,13 @@ def _effective_topic_origin(text: str, stored_origin: str = "") -> str:
         return origin
     if origin in TOPIC_ORIGINS:
         return origin
+    # Legacy user_question was overly broad, so it must be reclassified from
+    # text instead of being trusted. Unknown/missing labels follow the same path.
     return _classify_topic_origin(text)
 
 
 def _topic_valid_until(text: str, origin: str, observed_at: datetime) -> str:
+    """Return an explicit expiry for short-lived topics; durable topics use ''."""
     if _effective_topic_origin(text, origin) != "ephemeral_choice":
         return ""
     from .config import CURIOSITY_EPHEMERAL_TTL_MINUTES
@@ -380,8 +402,14 @@ def on_user_message(receiver_id: str, content: str = "", event_id: str = "",
             state["recent_topic_signals"] = topics[-12:]
             try:
                 from .curiosity_pool import observe_topic_signal
-                observe_topic_signal(state, topic_signal, now)
+                observed_question = observe_topic_signal(
+                    state, topic_signal, now
+                )
+                if observed_question:
+                    from .question_forge import forge_seed_into_pool
+                    forge_seed_into_pool(state, observed_question, now)
             except Exception:
+                # Curiosity Shadow must never block or change normal chat.
                 pass
 
     try:
@@ -389,11 +417,18 @@ def on_user_message(receiver_id: str, content: str = "", event_id: str = "",
     except Exception:
         pass  # Never block chat
 
+    # Resolve only the first real user message after an actually delivered
+    # proactive outreach. This ledger stores outcome metadata, not raw text.
     try:
         from .proactive_receipts import resolve_user_reply
-        resolve_user_reply(receiver_id, content, event_id, now=now)
+        resolve_user_reply(
+            receiver_id,
+            content,
+            event_id,
+            now=now,
+        )
     except Exception:
-        pass
+        pass  # Never block chat
 
 
 def on_assistant_message(receiver_id: str, content: str = "",
@@ -404,6 +439,9 @@ def on_assistant_message(receiver_id: str, content: str = "",
     def _update(state: dict):
         state["last_assistant_message_at"] = now.isoformat()
         pending = state.get("pending_followup")
+        # A successful reply only closes an explicit follow-up obligation when
+        # its text actually reports completion/recovery.  A generic "好" or an
+        # API error must not silently erase the unfinished conversational debt.
         if (isinstance(pending, dict)
                 and _FOLLOWUP_COMPLETION.search(str(content or ""))):
             state["pending_followup"] = None

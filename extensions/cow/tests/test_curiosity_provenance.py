@@ -73,8 +73,11 @@ class TestCuriositySelection:
         }
         assert _curiosity(self._context(topic), now) == []
 
-    def test_real_question_becomes_curiosity_with_provenance(self):
-        from cow.initiative_engine.thoughts import _curiosity
+    def test_direct_user_question_seeds_shadow_but_not_runtime_curiosity(self):
+        from cow.initiative_engine.thoughts import (
+            _curiosity,
+            _curiosity_topic_rejection_reason,
+        )
 
         now = datetime.now(timezone.utc)
         observed = (now - timedelta(hours=3)).isoformat()
@@ -86,14 +89,10 @@ class TestCuriositySelection:
             "observed_at": observed,
             "occurrence_count": 3,
         }
-        rows = _curiosity(self._context(topic), now)
-
-        assert len(rows) == 1
-        thought = rows[0]
-        assert thought.curiosity_origin == "knowledge_question"
-        assert thought.curiosity_topic_hash == "question-hash"
-        assert thought.curiosity_observed_at == observed
-        assert thought.curiosity_occurrence_count == 3
+        assert _curiosity(self._context(topic), now) == []
+        assert _curiosity_topic_rejection_reason(
+            topic, now
+        ) == "DIRECT_USER_QUESTION"
 
 
 class TestTopicRecurrence:
